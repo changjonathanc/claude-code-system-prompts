@@ -260,8 +260,7 @@ class DiffReader {
             welcomeMessage: document.getElementById('welcome-message'),
             loading: document.getElementById('loading'),
             error: document.getElementById('error'),
-            file1Content: document.getElementById('file1-content'),
-            file2Content: document.getElementById('file2-content'),
+            diffTable: document.querySelector('#diff-table tbody'),
             file1Name: document.getElementById('file1-name'),
             file2Name: document.getElementById('file2-name'),
             summary: document.getElementById('summary')
@@ -423,10 +422,9 @@ class DiffReader {
     renderDiff(content1, content2) {
         const diff = this.computeDiff(content1, content2);
 
-        const { file1Content, file2Content } = this.elements;
+        const { diffTable } = this.elements;
 
-        file1Content.innerHTML = '';
-        file2Content.innerHTML = '';
+        diffTable.innerHTML = '';
 
         // Ensure the container can expand to fit all content
         this.elements.diffContainer.style.height = 'auto';
@@ -434,32 +432,62 @@ class DiffReader {
         let line1 = 1;
         let line2 = 1;
 
-        // Group consecutive removed/added changes for word-level diffing
-        const groupedChanges = this.groupChanges(diff);
+        // Group consecutive changes for intelligent pairing
+        const changeGroups = this.groupConsecutiveChanges(diff);
 
-        groupedChanges.forEach(group => {
-            if (group.type === 'equal') {
-                // Unchanged lines
+        changeGroups.forEach(group => {
+            if (group.type === 'unchanged') {
+                // Unchanged lines - show on both sides
                 const lines = group.value.split('\n');
                 lines.forEach((lineText, index) => {
                     if (index === lines.length - 1 && lineText === '') return;
 
-                    file1Content.appendChild(this.createLine(line1++, lineText, 'context'));
-                    file2Content.appendChild(this.createLine(line2++, lineText, 'context'));
+                    const row = this.createTableRow(
+                        this.createLine(line1++, lineText, 'context'),
+                        this.createLine(line2++, lineText, 'context')
+                    );
+                    diffTable.appendChild(row);
                 });
             } else if (group.type === 'change') {
-                // Changed block - apply word-level diffing
-                this.renderWordDiff(group.removed, group.added, file1Content, file2Content, line1, line2);
-                line1 += group.removed.split('\n').filter(line => line !== '').length;
-                line2 += group.added.split('\n').filter(line => line !== '').length;
+                // Smart pairing of removed and added lines
+                const removedLines = group.removed.split('\n').filter(line => line !== '');
+                const addedLines = group.added.split('\n').filter(line => line !== '');
+                const maxLines = Math.max(removedLines.length, addedLines.length);
+
+                for (let i = 0; i < maxLines; i++) {
+                    const removedLine = removedLines[i] || '';
+                    const addedLine = addedLines[i] || '';
+
+                    let leftContent, rightContent;
+
+                    if (removedLine && addedLine) {
+                        // Both exist - pair them to show the change
+                        leftContent = this.createLine(line1++, removedLine, 'removed');
+                        rightContent = this.createLine(line2++, addedLine, 'added');
+                    } else if (removedLine) {
+                        // Only removed line
+                        leftContent = this.createLine(line1++, removedLine, 'removed');
+                        rightContent = this.createLine('', '', 'empty');
+                    } else if (addedLine) {
+                        // Only added line
+                        leftContent = this.createLine('', '', 'empty');
+                        rightContent = this.createLine(line2++, addedLine, 'added');
+                    }
+
+                    const row = this.createTableRow(leftContent, rightContent);
+                    diffTable.appendChild(row);
+                }
             } else if (group.type === 'removed') {
                 // Only removed lines
                 const lines = group.value.split('\n');
                 lines.forEach((lineText, index) => {
                     if (index === lines.length - 1 && lineText === '') return;
 
-                    file1Content.appendChild(this.createLine(line1++, lineText, 'removed'));
-                    file2Content.appendChild(this.createLine('', '', 'empty'));
+                    const row = this.createTableRow(
+                        this.createLine(line1++, lineText, 'removed'),
+                        this.createLine('', '', 'empty')
+                    );
+                    diffTable.appendChild(row);
                 });
             } else if (group.type === 'added') {
                 // Only added lines
@@ -467,8 +495,11 @@ class DiffReader {
                 lines.forEach((lineText, index) => {
                     if (index === lines.length - 1 && lineText === '') return;
 
-                    file1Content.appendChild(this.createLine('', '', 'empty'));
-                    file2Content.appendChild(this.createLine(line2++, lineText, 'added'));
+                    const row = this.createTableRow(
+                        this.createLine('', '', 'empty'),
+                        this.createLine(line2++, lineText, 'added')
+                    );
+                    diffTable.appendChild(row);
                 });
             }
         });
@@ -476,66 +507,41 @@ class DiffReader {
         this.elements.diffContainer.style.display = 'block';
     }
 
-    groupChanges(diff) {
-        const grouped = [];
+    groupConsecutiveChanges(diff) {
+        const groups = [];
         let i = 0;
 
         while (i < diff.length) {
             const change = diff[i];
 
             if (!change.added && !change.removed) {
-                grouped.push({ type: 'equal', value: change.value });
+                // Unchanged block
+                groups.push({ type: 'unchanged', value: change.value });
                 i++;
             } else if (change.removed) {
-                // Look for corresponding added change
+                // Look for consecutive removed and added changes to pair them
                 let removedText = change.value;
                 let addedText = '';
                 i++;
 
+                // Check if the next change is an addition
                 if (i < diff.length && diff[i].added) {
                     addedText = diff[i].value;
-                    grouped.push({ type: 'change', removed: removedText, added: addedText });
+                    // This is a change block (removed + added)
+                    groups.push({ type: 'change', removed: removedText, added: addedText });
                     i++;
                 } else {
-                    grouped.push({ type: 'removed', value: removedText });
+                    // Only removed, no corresponding addition
+                    groups.push({ type: 'removed', value: removedText });
                 }
             } else if (change.added) {
-                grouped.push({ type: 'added', value: change.value });
+                // Added block with no corresponding removal
+                groups.push({ type: 'added', value: change.value });
                 i++;
             }
         }
 
-        return grouped;
-    }
-
-    renderWordDiff(removedText, addedText, file1Content, file2Content, startLine1, startLine2) {
-        const removedLines = removedText.split('\n').filter(line => line !== '');
-        const addedLines = addedText.split('\n').filter(line => line !== '');
-        const maxLines = Math.max(removedLines.length, addedLines.length);
-
-        for (let i = 0; i < maxLines; i++) {
-            const removedLine = removedLines[i] || '';
-            const addedLine = addedLines[i] || '';
-
-            if (removedLine && addedLine) {
-                // Both lines exist - do word-level diff
-                const wordDiff = window.Diff.diffWords(removedLine, addedLine);
-
-                const removedHTML = this.renderWordDiffHTML(wordDiff, 'removed');
-                const addedHTML = this.renderWordDiffHTML(wordDiff, 'added');
-
-                file1Content.appendChild(this.createLineWithHTML(startLine1 + i, removedHTML, 'removed'));
-                file2Content.appendChild(this.createLineWithHTML(startLine2 + i, addedHTML, 'added'));
-            } else if (removedLine) {
-                // Only removed line
-                file1Content.appendChild(this.createLine(startLine1 + i, removedLine, 'removed'));
-                file2Content.appendChild(this.createLine('', '', 'empty'));
-            } else if (addedLine) {
-                // Only added line
-                file1Content.appendChild(this.createLine('', '', 'empty'));
-                file2Content.appendChild(this.createLine(startLine2 + i, addedLine, 'added'));
-            }
-        }
+        return groups;
     }
 
     renderWordDiffHTML(wordDiff, lineType) {
@@ -595,6 +601,21 @@ class DiffReader {
         return line;
     }
 
+    createTableRow(leftContent, rightContent) {
+        const row = document.createElement('tr');
+        
+        const leftCell = document.createElement('td');
+        leftCell.appendChild(leftContent);
+        
+        const rightCell = document.createElement('td');
+        rightCell.appendChild(rightContent);
+        
+        row.appendChild(leftCell);
+        row.appendChild(rightCell);
+        
+        return row;
+    }
+
     computeDiff(text1, text2) {
         if (!window.Diff) {
             throw new Error('Diff library not loaded');
@@ -621,8 +642,8 @@ class DiffReader {
     }
 
     updateSummary() {
-        const added = this.elements.file2Content.querySelectorAll('.line.added').length;
-        const removed = this.elements.file1Content.querySelectorAll('.line.removed').length;
+        const added = this.elements.diffTable.querySelectorAll('.line.added').length;
+        const removed = this.elements.diffTable.querySelectorAll('.line.removed').length;
         if (added > 0 || removed > 0) {
             this.elements.summary.textContent = `${added} line${added !== 1 ? 's' : ''} added, ${removed} removed`;
             this.elements.summary.style.display = 'block';

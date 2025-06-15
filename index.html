@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    
+    <!-- Primary Meta Tags -->
+    <title>Claude Code System Prompts – Diff Viewer</title>
+    <meta name="title" content="Claude Code System Prompts – Diff Viewer">
+    <meta name="description" content="Interactive web-based diff viewer to compare Claude Code system prompts across different versions. Features word-level highlighting, GitHub-style UI, and side-by-side comparison.">
+    <meta name="keywords" content="Claude Code, system prompts, diff viewer, Anthropic, AI prompts, version comparison, code diff, prompt engineering">
+    <meta name="author" content="Jonathan Chang">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="http://claude-code-system-prompt.jonathanc.net/">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="http://claude-code-system-prompt.jonathanc.net/">
+    <meta property="og:title" content="Claude Code System Prompts – Diff Viewer">
+    <meta property="og:description" content="Interactive web-based diff viewer to compare Claude Code system prompts across different versions. Features word-level highlighting and GitHub-style UI.">
+    <meta property="og:site_name" content="Claude Code System Prompts">
+    <meta property="og:locale" content="en_US">
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary">
+    <meta property="twitter:url" content="http://claude-code-system-prompt.jonathanc.net/">
+    <meta property="twitter:title" content="Claude Code System Prompts – Diff Viewer">
+    <meta property="twitter:description" content="Interactive web-based diff viewer to compare Claude Code system prompts across different versions. Features word-level highlighting and GitHub-style UI.">
+    <meta property="twitter:creator" content="@changjonathanc">
+    <meta property="twitter:site" content="@changjonathanc">
+    
+    <!-- Additional SEO -->
+    <meta name="theme-color" content="#0d1117">
+    <meta name="msapplication-TileColor" content="#0d1117">
+    <meta name="application-name" content="Claude Code System Prompts">
+    
+    <!-- Preconnects for performance -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="site.webmanifest">
+    
+    <!-- Favicon using emoji as placeholder -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔍</text></svg>">
+    
+    <!-- Schema.org structured data -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Claude Code System Prompts Diff Viewer",
+        "description": "Interactive web-based diff viewer to compare Claude Code system prompts across different versions",
+        "url": "http://claude-code-system-prompt.jonathanc.net/",
+        "author": {
+            "@type": "Person",
+            "name": "Jonathan Chang",
+            "url": "http://jonathanc.net",
+            "sameAs": [
+                "https://github.com/changjonathanc",
+                "https://twitter.com/changjonathanc"
+            ]
+        },
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web Browser",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        },
+        "applicationSubCategory": "Code Analysis Tool"
+    }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="theme-toggle">
+                    <input type="checkbox" id="theme-toggle" class="theme-toggle-input">
+                    <label for="theme-toggle" class="theme-toggle-label" aria-label="Toggle color mode">
+                        <div class="theme-toggle-slider">
+                            <i class="fas fa-sun theme-icon theme-icon-light"></i>
+                            <i class="fas fa-moon theme-icon theme-icon-dark"></i>
+                        </div>
+                    </label>
+                </div>
+                <div class="header-left">
+                    <h1 class="logo">Claude Code System Prompts</h1>
+                    <p class="disclaimer"><small><i class="fas fa-info-circle"></i> All prompts are dynamically extracted from npm packages on the client side. This website does not host any prompts or source code.</small></p>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="cli-install-section">
+                <div class="cli-install-card">
+                    <span class="cli-prompt">Try Claude Code:</span>
+                    <div class="code-block">
+                        <code>npm install -g @anthropic-ai/claude-code</code>
+                        <button class="copy-btn" id="copy-install-btn" aria-label="Copy install command">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <a href="https://docs.anthropic.com/en/docs/claude-code/overview" target="_blank" rel="noopener" class="docs-link">Documentation</a>
+                </div>
+            </div>
+
+            <div class="file-navigation">
+                <div class="file-selectors">
+                    <div class="file-selector">
+                        <label for="file1" class="visually-hidden">Base version</label>
+                        <select id="file1" class="version-select" aria-describedby="file-hint">
+                            <option value="">Base version...</option>
+                        </select>
+                    </div>
+                    <div class="comparison-arrow">
+                        <i class="fas fa-arrow-right"></i>
+                    </div>
+                    <div class="file-selector">
+                        <label for="file2" class="visually-hidden">Compare version</label>
+                        <select id="file2" class="version-select" aria-describedby="file-hint">
+                            <option value="">Compare version...</option>
+                        </select>
+                    </div>
+                </div>
+                <p id="file-hint" class="visually-hidden">Choose two distinct versions to compare</p>
+            </div>
+
+            <div id="summary" class="summary" aria-live="polite"></div>
+
+            <div id="welcome-message" class="welcome-message">
+                <div class="welcome-icon">
+                    <i class="fas fa-code-compare fa-3x"></i>
+                </div>
+                <h2>Welcome to the Dynamic Diff Viewer</h2>
+                <p>Select two versions from the dropdowns above to see the differences</p>
+                <p><small>System prompts are extracted directly from npm packages in real-time</small></p>
+            </div>
+
+            <div id="diff-container" class="diff-container" style="display: none;">
+                <div class="diff-header">
+                    <div class="file-header file1-header">
+                        <span class="file-info">
+                            <i class="fas fa-file-alt"></i>
+                            <span id="file1-name">Base version</span>
+                        </span>
+                    </div>
+                    <div class="file-header file2-header">
+                        <span class="file-info">
+                            <i class="fas fa-file-alt"></i>
+                            <span id="file2-name">Compare version</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="diff-content">
+                    <div class="diff-side" id="file1-content"></div>
+                    <div class="diff-side" id="file2-content"></div>
+                </div>
+            </div>
+
+            <div id="loading" class="loading" style="display: none;" aria-live="polite">
+                <div class="loading-spinner">
+                    <i class="fas fa-circle-notch fa-spin"></i>
+                </div>
+                <span>Loading diff...</span>
+            </div>
+
+            <div id="error" class="error-message" aria-live="assertive"></div>
+        </main>
+
+        <footer class="footer">
+            <p>
+                Made by <a href="http://jonathanc.net" target="_blank">Jonathan Chang</a>
+                •
+                <a href="https://github.com/changjonathanc/claude-code-system-prompts" target="_blank" class="github-link">
+                    <i class="fab fa-github"></i> View on GitHub
+                </a>
+            </p>
+        </footer>
+    </div>
+
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" crossorigin="anonymous"></script>
+    <script defer src="script.js"></script>
+    <noscript>Please enable JavaScript to use the diff viewer.</noscript>
+</body>
+</html>

@@ -1,0 +1,755 @@
+class DynamicPromptExtractor {
+    constructor() {
+        this.cache = new Map(); // Cache extracted prompts
+        this.packageData = null;
+    }
+
+    // Simple TAR parser for browser (minimal implementation)
+    parseTarBuffer(buffer) {
+        const files = [];
+        const view = new Uint8Array(buffer);
+        let offset = 0;
+        
+        while (offset < view.length) {
+            // TAR header is 512 bytes
+            if (offset + 512 > view.length) break;
+            
+            // Check for end of archive (two consecutive zero blocks)
+            const isZeroBlock = view.slice(offset, offset + 512).every(byte => byte === 0);
+            if (isZeroBlock) break;
+            
+            // Parse TAR header
+            const nameBytes = view.slice(offset, offset + 100);
+            const name = new TextDecoder().decode(nameBytes).replace(/\0.*$/, '');
+            
+            if (!name) {
+                offset += 512;
+                continue;
+            }
+            
+            // Get file size (octal string at offset 124, 12 bytes)
+            const sizeBytes = view.slice(offset + 124, offset + 136);
+            const sizeStr = new TextDecoder().decode(sizeBytes).replace(/\0.*$/, '').replace(/\s/g, '');
+            const size = parseInt(sizeStr, 8) || 0;
+            
+            // Get file type (offset 156)
+            const typeFlag = String.fromCharCode(view[offset + 156]);
+            
+            offset += 512; // Skip header
+            
+            if (typeFlag === '0' || typeFlag === '' || typeFlag === '\0') { // Regular file
+                const content = view.slice(offset, offset + size);
+                files.push({
+                    name: name,
+                    content: content,
+                    size: size
+                });
+            }
+            
+            // Round up to next 512-byte boundary
+            const paddedSize = Math.ceil(size / 512) * 512;
+            offset += paddedSize;
+        }
+        
+        return files;
+    }
+
+    extractPrompt(content, searchString = 'You are an interactive CLI tool') {
+        try {
+            // Use dynamic import for acorn since it's not available in browser
+            // Fall back to simple string parsing if AST parsing fails
+            return this.extractPromptAST(content, searchString) || this.extractPromptSimple(content, searchString);
+        } catch (error) {
+            console.warn('AST parsing failed, falling back to simple parsing:', error);
+            return this.extractPromptSimple(content, searchString);
+        }
+    }
+
+    extractPromptAST(content, searchString) {
+        // This would need acorn to be available in browser, which it isn't by default
+        // We'll implement a simple template literal finder instead
+        return this.extractPromptSimple(content, searchString);
+    }
+
+    extractPromptSimple(content, searchString = 'You are an interactive CLI tool') {
+        const index = content.indexOf(searchString);
+        if (index === -1) {
+            return null;
+        }
+        
+        // Look for template literal backticks first (most common case)
+        let start = index;
+        while (start > 0 && content[start] !== '`') {
+            start--;
+        }
+        
+        if (content[start] === '`') {
+            // Found template literal, find the closing backtick
+            let end = index + searchString.length;
+            let depth = 0;
+            
+            while (end < content.length) {
+                if (content[end] === '`' && depth === 0) {
+                    break;
+                } else if (content[end] === '$' && content[end + 1] === '{') {
+                    depth++;
+                    end += 2;
+                } else if (content[end] === '}' && depth > 0) {
+                    depth--;
+                    end++;
+                } else if (content[end] === '\\') {
+                    end += 2; // Skip escaped character
+                } else {
+                    end++;
+                }
+            }
+            
+            if (end < content.length) {
+                return content.substring(start, end + 1);
+            }
+        }
+        
+        // Fall back to quote-based parsing
+        start = index;
+        while (start > 0 && !['`', '"', "'"].includes(content[start])) {
+            start--;
+        }
+        
+        if (start === 0 && !['`', '"', "'"].includes(content[start])) {
+            return null;
+        }
+        
+        const startChar = content[start];
+        let end = index + searchString.length;
+        
+        while (end < content.length) {
+            if (content[end] === startChar) {
+                break;
+            } else if (content[end] === '\\') {
+                end += 2; // Skip escaped character
+            } else {
+                end++;
+            }
+        }
+        
+        if (end >= content.length) {
+            return null;
+        }
+        
+        return content.substring(start, end + 1);
+    }
+
+    async getPackageMetadata() {
+        if (this.packageData) {
+            return this.packageData;
+        }
+
+        const response = await fetch('https://registry.npmjs.org/@anthropic-ai/claude-code');
+        if (!response.ok) {
+            throw new Error(`Failed to get package metadata: ${response.status}`);
+        }
+        
+        this.packageData = await response.json();
+        return this.packageData;
+    }
+
+    async extractPromptFromVersion(version) {
+        // Check cache first
+        if (this.cache.has(version)) {
+            return this.cache.get(version);
+        }
+
+        console.log(`Extracting prompt for version ${version}...`);
+
+        try {
+            // Get package metadata
+            const packageData = await this.getPackageMetadata();
+            
+            if (!packageData.versions[version]) {
+                throw new Error(`Version ${version} not found`);
+            }
+
+            // Get tarball URL
+            const tarballUrl = packageData.versions[version].dist.tarball;
+            
+            // Download tarball
+            const tarballResponse = await fetch(tarballUrl);
+            if (!tarballResponse.ok) {
+                throw new Error(`Failed to download tarball: ${tarballResponse.status}`);
+            }
+            
+            const tarballData = await tarballResponse.arrayBuffer();
+            
+            // Decompress gzip
+            const uint8Array = new Uint8Array(tarballData);
+            const decompressed = pako.ungzip(uint8Array);
+            
+            // Parse TAR
+            const files = this.parseTarBuffer(decompressed.buffer.slice(decompressed.byteOffset, decompressed.byteOffset + decompressed.byteLength));
+            
+            // Look for CLI files
+            const cliFile = files.find(file => 
+                file.name === 'package/cli.js' || 
+                file.name === 'package/cli.mjs'
+            );
+            
+            if (!cliFile) {
+                throw new Error(`No CLI file found in version ${version}`);
+            }
+            
+            // Extract content and find prompt
+            const content = new TextDecoder().decode(cliFile.content);
+            const prompt = this.extractPrompt(content);
+            
+            if (!prompt) {
+                throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
+            }
+
+            // Cache the result - just the prompt without metadata
+            this.cache.set(version, { prompt, length: prompt.length });
+            
+            console.log(`✓ Extracted prompt for ${version} (${prompt.length} characters)`);
+            return { prompt, length: prompt.length };
+
+        } catch (error) {
+            console.error(`Failed to extract prompt for ${version}:`, error);
+            throw error;
+        }
+    }
+
+    async getAvailableVersions() {
+        const packageData = await this.getPackageMetadata();
+        return Object.keys(packageData.versions).map(version => ({
+            version,
+            date: packageData.time[version] ? new Date(packageData.time[version]).toISOString().split('T')[0] : null
+        })).sort((a, b) => {
+            // Natural version sort
+            const aMatch = a.version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+            const bMatch = b.version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+
+            if (aMatch && bMatch) {
+                const aMajor = parseInt(aMatch[1]);
+                const aMinor = parseInt(aMatch[2]);
+                const aPatch = parseInt(aMatch[3]);
+
+                const bMajor = parseInt(bMatch[1]);
+                const bMinor = parseInt(bMatch[2]);
+                const bPatch = parseInt(bMatch[3]);
+
+                if (aMajor !== bMajor) return aMajor - bMajor;
+                if (aMinor !== bMinor) return aMinor - bMinor;
+                return aPatch - bPatch;
+            }
+
+            return a.version.localeCompare(b.version);
+        });
+    }
+}
+
+class DiffReader {
+    constructor(baseFile = null, compareFile = null) {
+        this.files = [];
+        this.fileContents = new Map();
+        this.initialFiles = { base: baseFile, compare: compareFile };
+        this.promptExtractor = new DynamicPromptExtractor();
+
+        this.elements = {
+            file1Select: document.getElementById('file1'),
+            file2Select: document.getElementById('file2'),
+            diffContainer: document.getElementById('diff-container'),
+            welcomeMessage: document.getElementById('welcome-message'),
+            loading: document.getElementById('loading'),
+            error: document.getElementById('error'),
+            file1Content: document.getElementById('file1-content'),
+            file2Content: document.getElementById('file2-content'),
+            file1Name: document.getElementById('file1-name'),
+            file2Name: document.getElementById('file2-name'),
+            summary: document.getElementById('summary')
+        };
+
+        this.init();
+    }
+
+    async init() {
+        console.log('DiffReader init called - loading versions dynamically from npm');
+        this.elements.diffContainer.style.display = 'none';
+        this.elements.welcomeMessage.style.display = 'block';
+        await this.loadFileList();
+        this.setupEventListeners();
+        this.setDefaultSelection();
+        console.log('DiffReader init completed');
+    }
+
+    async loadFileList() {
+        try {
+            this.showLoading();
+            console.log('Loading available versions from npm registry...');
+            
+            const versions = await this.promptExtractor.getAvailableVersions();
+            this.files = versions; // Now contains objects with version and date
+            
+            console.log(`Loaded ${this.files.length} versions from npm registry`);
+            this.populateDropdowns();
+            
+        } catch (error) {
+            console.error('Failed to load versions:', error);
+            this.showError(`Failed to load versions: ${error.message}`);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    populateDropdowns() {
+        const { file1Select, file2Select } = this.elements;
+        
+        console.log('Populating dropdowns with', this.files.length, 'files');
+
+        // Clear dropdowns but keep placeholders
+        file1Select.innerHTML = '<option value="">Base version...</option>';
+        file2Select.innerHTML = '<option value="">Compare version...</option>';
+
+        // Add file options
+        this.files.forEach(fileInfo => {
+            const displayText = fileInfo.date 
+                ? `${fileInfo.version} (${fileInfo.date})`
+                : fileInfo.version;
+            const option1 = new Option(displayText, fileInfo.version);
+            const option2 = new Option(displayText, fileInfo.version);
+            file1Select.appendChild(option1);
+            file2Select.appendChild(option2);
+        });
+        
+        console.log('Dropdowns populated. File1 has', file1Select.options.length, 'options');
+    }
+
+
+    setupEventListeners() {
+        const onChange = () => {
+            const { value: version1 } = this.elements.file1Select;
+            const { value: version2 } = this.elements.file2Select;
+            if (!version1 || !version2) return;
+            if (version1 === version2) {
+                this.showError('Pick two different versions.');
+                this.elements.diffContainer.style.display = 'none';
+                this.elements.welcomeMessage.style.display = 'block';
+                return;
+            }
+            history.replaceState({}, '', `?base=${version1}&compare=${version2}`);
+            this.compareFiles();
+        };
+
+        ['change', 'keydown'].forEach(ev => {
+            this.elements.file1Select.addEventListener(ev, e => {
+                if (e.type === 'change' || e.key === 'Enter') onChange();
+            });
+            this.elements.file2Select.addEventListener(ev, e => {
+                if (e.type === 'change' || e.key === 'Enter') onChange();
+            });
+        });
+
+        document.addEventListener('keyup', e => {
+            if (e.target.tagName === 'SELECT') return;
+            if (e.key === 'j') this.scrollLine(1);
+            if (e.key === 'k') this.scrollLine(-1);
+        });
+    }
+
+    setDefaultSelection() {
+        if (this.initialFiles.base && this.initialFiles.compare) {
+            this.elements.file1Select.value = this.initialFiles.base;
+            this.elements.file2Select.value = this.initialFiles.compare;
+            this.compareFiles();
+        } else if (this.files.length >= 2) {
+            const latest = this.files[this.files.length - 1];
+            const secondLatest = this.files[this.files.length - 2];
+
+            this.elements.file1Select.value = secondLatest.version;
+            this.elements.file2Select.value = latest.version;
+
+            this.compareFiles();
+        }
+    }
+
+    async loadFileContent(version) {
+        if (this.fileContents.has(version)) {
+            return this.fileContents.get(version);
+        }
+
+        try {
+            console.log(`Dynamically extracting prompt for ${version}...`);
+            const result = await this.promptExtractor.extractPromptFromVersion(version);
+            this.fileContents.set(version, result);
+            
+            return result;
+        } catch (error) {
+            console.error(`Error loading ${version}:`, error);
+            this.showError(`Failed to load ${version}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async compareFiles() {
+        const version1 = this.elements.file1Select.value;
+        const version2 = this.elements.file2Select.value;
+
+        if (!version1 || !version2 || version1 === version2) {
+            return;
+        }
+
+        this.showLoading();
+        this.hideError();
+        this.elements.welcomeMessage.style.display = 'none';
+        this.elements.diffContainer.style.display = 'none';
+
+        try {
+            const [content1, content2] = await Promise.all([
+                this.loadFileContent(version1),
+                this.loadFileContent(version2)
+            ]);
+
+            // Update file names in the diff header with character counts
+            this.elements.file1Name.textContent = `Version ${version1} (${content1.length.toLocaleString()} characters)`;
+            this.elements.file2Name.textContent = `Version ${version2} (${content2.length.toLocaleString()} characters)`;
+
+            this.renderDiff(content1.prompt, content2.prompt);
+            this.updateSummary();
+        } catch (error) {
+            this.showError(`Failed to load files: ${error.message}`);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    renderDiff(content1, content2) {
+        const diff = this.computeDiff(content1, content2);
+
+        const { file1Content, file2Content } = this.elements;
+
+        file1Content.innerHTML = '';
+        file2Content.innerHTML = '';
+
+        // Ensure the container can expand to fit all content
+        this.elements.diffContainer.style.height = 'auto';
+
+        let line1 = 1;
+        let line2 = 1;
+
+        // Group consecutive removed/added changes for word-level diffing
+        const groupedChanges = this.groupChanges(diff);
+
+        groupedChanges.forEach(group => {
+            if (group.type === 'equal') {
+                // Unchanged lines
+                const lines = group.value.split('\n');
+                lines.forEach((lineText, index) => {
+                    if (index === lines.length - 1 && lineText === '') return;
+
+                    file1Content.appendChild(this.createLine(line1++, lineText, 'context'));
+                    file2Content.appendChild(this.createLine(line2++, lineText, 'context'));
+                });
+            } else if (group.type === 'change') {
+                // Changed block - apply word-level diffing
+                this.renderWordDiff(group.removed, group.added, file1Content, file2Content, line1, line2);
+                line1 += group.removed.split('\n').filter(line => line !== '').length;
+                line2 += group.added.split('\n').filter(line => line !== '').length;
+            } else if (group.type === 'removed') {
+                // Only removed lines
+                const lines = group.value.split('\n');
+                lines.forEach((lineText, index) => {
+                    if (index === lines.length - 1 && lineText === '') return;
+
+                    file1Content.appendChild(this.createLine(line1++, lineText, 'removed'));
+                    file2Content.appendChild(this.createLine('', '', 'empty'));
+                });
+            } else if (group.type === 'added') {
+                // Only added lines
+                const lines = group.value.split('\n');
+                lines.forEach((lineText, index) => {
+                    if (index === lines.length - 1 && lineText === '') return;
+
+                    file1Content.appendChild(this.createLine('', '', 'empty'));
+                    file2Content.appendChild(this.createLine(line2++, lineText, 'added'));
+                });
+            }
+        });
+
+        this.elements.diffContainer.style.display = 'block';
+    }
+
+    groupChanges(diff) {
+        const grouped = [];
+        let i = 0;
+
+        while (i < diff.length) {
+            const change = diff[i];
+
+            if (!change.added && !change.removed) {
+                grouped.push({ type: 'equal', value: change.value });
+                i++;
+            } else if (change.removed) {
+                // Look for corresponding added change
+                let removedText = change.value;
+                let addedText = '';
+                i++;
+
+                if (i < diff.length && diff[i].added) {
+                    addedText = diff[i].value;
+                    grouped.push({ type: 'change', removed: removedText, added: addedText });
+                    i++;
+                } else {
+                    grouped.push({ type: 'removed', value: removedText });
+                }
+            } else if (change.added) {
+                grouped.push({ type: 'added', value: change.value });
+                i++;
+            }
+        }
+
+        return grouped;
+    }
+
+    renderWordDiff(removedText, addedText, file1Content, file2Content, startLine1, startLine2) {
+        const removedLines = removedText.split('\n').filter(line => line !== '');
+        const addedLines = addedText.split('\n').filter(line => line !== '');
+        const maxLines = Math.max(removedLines.length, addedLines.length);
+
+        for (let i = 0; i < maxLines; i++) {
+            const removedLine = removedLines[i] || '';
+            const addedLine = addedLines[i] || '';
+
+            if (removedLine && addedLine) {
+                // Both lines exist - do word-level diff
+                const wordDiff = window.Diff.diffWords(removedLine, addedLine);
+
+                const removedHTML = this.renderWordDiffHTML(wordDiff, 'removed');
+                const addedHTML = this.renderWordDiffHTML(wordDiff, 'added');
+
+                file1Content.appendChild(this.createLineWithHTML(startLine1 + i, removedHTML, 'removed'));
+                file2Content.appendChild(this.createLineWithHTML(startLine2 + i, addedHTML, 'added'));
+            } else if (removedLine) {
+                // Only removed line
+                file1Content.appendChild(this.createLine(startLine1 + i, removedLine, 'removed'));
+                file2Content.appendChild(this.createLine('', '', 'empty'));
+            } else if (addedLine) {
+                // Only added line
+                file1Content.appendChild(this.createLine('', '', 'empty'));
+                file2Content.appendChild(this.createLine(startLine2 + i, addedLine, 'added'));
+            }
+        }
+    }
+
+    renderWordDiffHTML(wordDiff, lineType) {
+        return wordDiff.map(part => {
+            if (!part.added && !part.removed) {
+                // Unchanged word
+                return this.escapeHtml(part.value);
+            } else if ((lineType === 'removed' && part.removed) || (lineType === 'added' && part.added)) {
+                // Highlight this word
+                return `<span class="word-diff">${this.escapeHtml(part.value)}</span>`;
+            } else {
+                // Don't show this word (it belongs to the other side)
+                return '';
+            }
+        }).join('');
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    createLine(lineNumber, content, type) {
+        const line = document.createElement('div');
+        line.className = `line ${type}`;
+
+        const lineNum = document.createElement('div');
+        lineNum.className = 'line-number';
+        lineNum.textContent = lineNumber;
+
+        const lineContent = document.createElement('div');
+        lineContent.className = 'line-content';
+        lineContent.textContent = content;
+
+        line.appendChild(lineNum);
+        line.appendChild(lineContent);
+
+        return line;
+    }
+
+    createLineWithHTML(lineNumber, htmlContent, type) {
+        const line = document.createElement('div');
+        line.className = `line ${type}`;
+
+        const lineNum = document.createElement('div');
+        lineNum.className = 'line-number';
+        lineNum.textContent = lineNumber;
+
+        const lineContent = document.createElement('div');
+        lineContent.className = 'line-content';
+        lineContent.innerHTML = htmlContent;
+
+        line.appendChild(lineNum);
+        line.appendChild(lineContent);
+
+        return line;
+    }
+
+    computeDiff(text1, text2) {
+        if (!window.Diff) {
+            throw new Error('Diff library not loaded');
+        }
+        return window.Diff.diffLines(text1, text2, { newlineIsToken: false, ignoreWhitespace: false });
+    }
+
+    showLoading() {
+        this.elements.loading.style.display = 'flex';
+    }
+
+    hideLoading() {
+        this.elements.loading.style.display = 'none';
+    }
+
+    showError(message) {
+        const errorElement = this.elements.error;
+        errorElement.textContent = message;
+        errorElement.style.display = 'block';
+    }
+
+    hideError() {
+        this.elements.error.style.display = 'none';
+    }
+
+    updateSummary() {
+        const added = this.elements.file2Content.querySelectorAll('.line.added').length;
+        const removed = this.elements.file1Content.querySelectorAll('.line.removed').length;
+        if (added > 0 || removed > 0) {
+            this.elements.summary.textContent = `${added} line${added !== 1 ? 's' : ''} added, ${removed} removed`;
+            this.elements.summary.style.display = 'block';
+        } else {
+            this.elements.summary.style.display = 'none';
+        }
+    }
+
+    scrollLine(dir) {
+        const sel = '.line.added,.line.removed';
+        const lines = [...document.querySelectorAll(sel)];
+        const top = window.scrollY;
+        const next = dir > 0
+            ? lines.find(l => l.offsetTop > top + 5)
+            : [...lines].reverse().find(l => l.offsetTop < top - 5);
+        if (next) next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    // Wait for both Diff library and pako to be available
+    const waitForLibraries = () => {
+        if (window.Diff && window.pako) {
+            const params = new URLSearchParams(location.search);
+            new DiffReader(params.get('base'), params.get('compare'));
+        } else {
+            setTimeout(waitForLibraries, 50);
+        }
+    };
+    waitForLibraries();
+
+    // Setup copy button
+    const copyBtn = document.getElementById('copy-install-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', copyInstallCommand);
+        console.log('Copy button event listener attached');
+    }
+
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const savedTheme = localStorage.getItem('theme');
+
+        const applyTheme = (theme) => {
+            const isLight = theme === 'light';
+            document.body.classList.toggle('light', isLight);
+            themeToggle.checked = isLight;
+        };
+
+        applyTheme(savedTheme ? savedTheme : (prefersDark ? 'dark' : 'light'));
+
+        themeToggle.addEventListener('change', () => {
+            const newTheme = themeToggle.checked ? 'light' : 'dark';
+            applyTheme(newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+    }
+});
+
+// Copy install command function
+function copyInstallCommand() {
+    const command = 'npm install -g @anthropic-ai/claude-code';
+    const button = document.getElementById('copy-install-btn');
+    
+    console.log('Copy function called, command:', command);
+    console.log('Button found:', button);
+    
+    if (!button) {
+        console.error('Copy button not found');
+        return;
+    }
+    
+    // Try modern clipboard API first
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(command).then(() => {
+            console.log('Clipboard API success');
+            button.innerHTML = '<i class="fas fa-check"></i>';
+            button.classList.add('copied');
+            
+            setTimeout(() => {
+                button.innerHTML = '<i class="fas fa-copy"></i>';
+                button.classList.remove('copied');
+            }, 2000);
+        }).catch((err) => {
+            console.error('Clipboard API failed:', err);
+            fallbackCopy();
+        });
+    } else {
+        console.log('Using fallback copy method');
+        fallbackCopy();
+    }
+    
+    function fallbackCopy() {
+        const textArea = document.createElement('textarea');
+        textArea.value = command;
+        textArea.style.position = 'absolute';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            const successful = document.execCommand('copy');
+            console.log('Fallback copy result:', successful);
+            
+            if (successful) {
+                button.innerHTML = '<i class="fas fa-check"></i>';
+                button.classList.add('copied');
+                
+                setTimeout(() => {
+                    button.innerHTML = '<i class="fas fa-copy"></i>';
+                    button.classList.remove('copied');
+                }, 2000);
+            } else {
+                throw new Error('execCommand failed');
+            }
+        } catch (fallbackErr) {
+            console.error('Fallback copy failed:', fallbackErr);
+            button.innerHTML = '<i class="fas fa-times"></i>';
+            
+            setTimeout(() => {
+                button.innerHTML = '<i class="fas fa-copy"></i>';
+            }, 2000);
+        } finally {
+            document.body.removeChild(textArea);
+        }
+    }
+}

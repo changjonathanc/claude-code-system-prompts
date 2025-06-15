@@ -103,22 +103,7 @@
                     <p class="disclaimer"><small><i class="fas fa-info-circle"></i> All prompts are dynamically extracted from npm packages on the client side. This website does not host any prompts or source code.</small></p>
                 </div>
             </div>
-        </header>
-
-        <main class="main-content">
-            <div class="cli-install-section">
-                <div class="cli-install-card">
-                    <span class="cli-prompt">Try Claude Code:</span>
-                    <div class="code-block">
-                        <code>npm install -g @anthropic-ai/claude-code</code>
-                        <button class="copy-btn" id="copy-install-btn" aria-label="Copy install command">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                    </div>
-                    <a href="https://docs.anthropic.com/en/docs/claude-code/overview" target="_blank" rel="noopener" class="docs-link">Documentation</a>
-                </div>
-            </div>
-
+            
             <div class="file-navigation">
                 <div class="file-selectors">
                     <div class="file-selector">
@@ -139,6 +124,9 @@
                 </div>
                 <p id="file-hint" class="visually-hidden">Choose two distinct versions to compare</p>
             </div>
+        </header>
+
+        <main class="main-content">
 
             <div id="summary" class="summary" aria-live="polite"></div>
 
@@ -181,6 +169,19 @@
             </div>
 
             <div id="error" class="error-message" aria-live="assertive"></div>
+            
+            <div class="cli-install-section">
+                <div class="cli-install-card">
+                    <span class="cli-prompt">Try Claude Code:</span>
+                    <div class="code-block">
+                        <code>npm install -g @anthropic-ai/claude-code</code>
+                        <button class="copy-btn" id="copy-install-btn" aria-label="Copy install command">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <a href="https://docs.anthropic.com/en/docs/claude-code/overview" target="_blank" rel="noopener" class="docs-link">Documentation</a>
+                </div>
+            </div>
         </main>
 
         <footer class="footer">

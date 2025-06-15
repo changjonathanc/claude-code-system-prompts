@@ -52,21 +52,26 @@ body {
     color: var(--text-primary);
     line-height: 1.5;
     font-size: 14px;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    overflow: hidden;
 }
 
 .container {
     max-width: 1280px;
     margin: 0 auto;
-    padding: 16px;
+    height: 100vh;
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
 .header {
-    padding: 0;
-    margin-bottom: 24px;
+    flex-shrink: 0;
+    padding: 16px;
+    background-color: var(--bg-color);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .header-content {
@@ -115,10 +120,13 @@ body {
 
 .main-content {
     flex: 1;
+    overflow-y: auto;
+    padding: 16px;
 }
 
 /* CLI Install Section */
 .cli-install-section {
+    margin-top: 40px;
     margin-bottom: 20px;
 }
 
@@ -196,8 +204,8 @@ body {
 
 /* File navigation */
 .file-navigation {
-    padding: 0;
-    margin-bottom: 16px;
+    padding: 16px 0 0 0;
+    margin-top: 16px;
 }
 
 .file-selectors {
@@ -314,7 +322,6 @@ body {
 
 .diff-content {
     min-height: 400px;
-    overflow: auto;
 }
 
 .diff-table {
@@ -470,6 +477,7 @@ body {
 
     .file-selectors {
         flex-direction: column;
+        gap: 12px;
     }
 
     .file-selector {
@@ -478,11 +486,14 @@ body {
 
     .comparison-arrow {
         transform: rotate(90deg);
-        margin: 8px 0;
     }
 
-    .container {
-        padding: 8px;
+    .header {
+        padding: 12px;
+    }
+    
+    .main-content {
+        padding: 12px;
     }
     
     .theme-toggle {

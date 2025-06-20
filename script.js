@@ -540,7 +540,10 @@ class DiffReader {
 
     async loadFileList() {
         try {
-            this.showLoading();
+            this.showLoading(`
+                <strong>Loading available versions...</strong><br>
+                <small>Fetching package metadata from npm registry</small>
+            `);
             console.log('Loading available versions from npm registry...');
             
             const versions = await this.promptExtractor.getAvailableVersions();
@@ -654,7 +657,10 @@ class DiffReader {
             return;
         }
 
-        this.showLoading();
+        this.showLoading(`
+            <strong>Extracting and comparing prompts...</strong><br>
+            <small>Downloading npm packages, decompressing archives, parsing JavaScript, and resolving template variables</small>
+        `);
         this.hideError();
         this.elements.welcomeMessage.style.display = 'none';
         this.elements.diffContainer.style.display = 'none';
@@ -882,7 +888,13 @@ class DiffReader {
         return window.Diff.diffLines(text1, text2, { newlineIsToken: false, ignoreWhitespace: false });
     }
 
-    showLoading() {
+    showLoading(message = null) {
+        if (message) {
+            const loadingText = this.elements.loading.querySelector('span');
+            if (loadingText) {
+                loadingText.innerHTML = message;
+            }
+        }
         this.elements.loading.style.display = 'flex';
     }
 

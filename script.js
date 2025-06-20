@@ -59,15 +59,20 @@ class DynamicPromptExtractor {
             // Try AST parsing first for proper variable resolution
             const astResult = await this.extractPromptAST(content, searchString);
             if (astResult) {
-                console.log('✓ AST parsing successful with variable resolution');
+                // Only log in debug mode or Node.js environment
+                if (typeof window === 'undefined' || window.location.search.includes('debug=true')) {
+                    console.log('✓ AST parsing successful with variable resolution');
+                }
                 return astResult;
             }
             
             // Fall back to simple string parsing if AST parsing fails
-            console.log('→ Falling back to simple parsing (no variable resolution)');
             return this.extractPromptSimple(content, searchString);
         } catch (error) {
-            console.warn('AST parsing failed, falling back to simple parsing:', error);
+            // Only log errors in debug mode
+            if (typeof window === 'undefined' || window.location.search.includes('debug=true')) {
+                console.warn('Extraction error:', error.message);
+            }
             return this.extractPromptSimple(content, searchString);
         }
     }
@@ -86,7 +91,35 @@ class DynamicPromptExtractor {
             
             // Preprocess content to handle shebangs and other issues
             const cleanContent = this.preprocessContent(content);
-            const ast = acorn.parse(cleanContent, { ecmaVersion: 2020, sourceType: 'module' });
+            
+            // Try different parsing strategies for robustness
+            let ast;
+            const parseOptions = [
+                // Modern module
+                { ecmaVersion: 2022, sourceType: 'module', allowHashBang: true },
+                // Modern script
+                { ecmaVersion: 2022, sourceType: 'script', allowHashBang: true },
+                // Legacy module
+                { ecmaVersion: 2020, sourceType: 'module', allowHashBang: true },
+                // Legacy script
+                { ecmaVersion: 2020, sourceType: 'script', allowHashBang: true },
+                // Very permissive
+                { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, allowReserved: true }
+            ];
+            
+            for (const options of parseOptions) {
+                try {
+                    ast = acorn.parse(cleanContent, options);
+                    break; // Success!
+                } catch (parseError) {
+                    // Try next option
+                    continue;
+                }
+            }
+            
+            if (!ast) {
+                throw new Error('All parsing strategies failed');
+            }
             
             // Walk AST to find template literal containing searchString
             const result = this.findTemplateInAST(ast, cleanContent, searchString);
@@ -98,8 +131,11 @@ class DynamicPromptExtractor {
             // Resolve template variables
             return this.resolveTemplateVariables(result.template, scope);
         } catch (error) {
-            console.warn('AST parsing failed:', error);
-            return this.extractPromptSimple(content, searchString);
+            // Silently fail to reduce console noise, but keep for debugging
+            if (typeof window !== 'undefined' && window.location.search.includes('debug=true')) {
+                console.warn('AST parsing failed:', error.message);
+            }
+            return null; // Return null to trigger fallback
         }
     }
 

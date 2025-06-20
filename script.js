@@ -83,10 +83,13 @@ class DynamicPromptExtractor {
                 // Node.js environment - use local package
                 acorn = await import('acorn');
             }
-            const ast = acorn.parse(content, { ecmaVersion: 2020, sourceType: 'module' });
+            
+            // Preprocess content to handle shebangs and other issues
+            const cleanContent = this.preprocessContent(content);
+            const ast = acorn.parse(cleanContent, { ecmaVersion: 2020, sourceType: 'module' });
             
             // Walk AST to find template literal containing searchString
-            const result = this.findTemplateInAST(ast, content, searchString);
+            const result = this.findTemplateInAST(ast, cleanContent, searchString);
             if (!result) return null;
             
             // Build scope context at template position
@@ -98,6 +101,26 @@ class DynamicPromptExtractor {
             console.warn('AST parsing failed:', error);
             return this.extractPromptSimple(content, searchString);
         }
+    }
+
+    preprocessContent(content) {
+        let processed = content;
+        
+        // Remove shebang lines (#!/usr/bin/env node, etc.)
+        if (processed.startsWith('#!')) {
+            const firstNewline = processed.indexOf('\n');
+            if (firstNewline !== -1) {
+                processed = processed.substring(firstNewline + 1);
+            }
+        }
+        
+        // Handle other potential parsing issues
+        // Remove UTF-8 BOM if present
+        if (processed.charCodeAt(0) === 0xFEFF) {
+            processed = processed.substring(1);
+        }
+        
+        return processed;
     }
 
     extractPromptSimple(content, searchString = 'You are an interactive CLI tool') {
@@ -374,6 +397,14 @@ class DynamicPromptExtractor {
             
             // Decompress gzip
             const uint8Array = new Uint8Array(tarballData);
+            let pako;
+            if (typeof window !== 'undefined') {
+                // Browser environment - pako is loaded globally
+                pako = window.pako;
+            } else {
+                // Node.js environment - require pako
+                pako = require('pako');
+            }
             const decompressed = pako.ungzip(uint8Array);
             
             // Parse TAR

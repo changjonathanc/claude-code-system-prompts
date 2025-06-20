@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "acorn": "^8.15.0"
+    "acorn": "^8.15.0",
+    "pako": "^2.1.0"
   }
 }

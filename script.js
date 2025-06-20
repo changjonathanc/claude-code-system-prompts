@@ -54,21 +54,50 @@ class DynamicPromptExtractor {
         return files;
     }
 
-    extractPrompt(content, searchString = 'You are an interactive CLI tool') {
+    async extractPrompt(content, searchString = 'You are an interactive CLI tool') {
         try {
-            // Use dynamic import for acorn since it's not available in browser
+            // Try AST parsing first for proper variable resolution
+            const astResult = await this.extractPromptAST(content, searchString);
+            if (astResult) {
+                console.log('✓ AST parsing successful with variable resolution');
+                return astResult;
+            }
+            
             // Fall back to simple string parsing if AST parsing fails
-            return this.extractPromptAST(content, searchString) || this.extractPromptSimple(content, searchString);
+            console.log('→ Falling back to simple parsing (no variable resolution)');
+            return this.extractPromptSimple(content, searchString);
         } catch (error) {
             console.warn('AST parsing failed, falling back to simple parsing:', error);
             return this.extractPromptSimple(content, searchString);
         }
     }
 
-    extractPromptAST(content, searchString) {
-        // This would need acorn to be available in browser, which it isn't by default
-        // We'll implement a simple template literal finder instead
-        return this.extractPromptSimple(content, searchString);
+    async extractPromptAST(content, searchString) {
+        try {
+            // Dynamic import acorn for proper AST parsing
+            let acorn;
+            if (typeof window !== 'undefined') {
+                // Browser environment - use CDN
+                acorn = await import('https://cdn.skypack.dev/acorn');
+            } else {
+                // Node.js environment - use local package
+                acorn = await import('acorn');
+            }
+            const ast = acorn.parse(content, { ecmaVersion: 2020, sourceType: 'module' });
+            
+            // Walk AST to find template literal containing searchString
+            const result = this.findTemplateInAST(ast, content, searchString);
+            if (!result) return null;
+            
+            // Build scope context at template position
+            const scope = this.buildASTScope(ast, result.node);
+            
+            // Resolve template variables
+            return this.resolveTemplateVariables(result.template, scope);
+        } catch (error) {
+            console.warn('AST parsing failed:', error);
+            return this.extractPromptSimple(content, searchString);
+        }
     }
 
     extractPromptSimple(content, searchString = 'You are an interactive CLI tool') {
@@ -139,6 +168,169 @@ class DynamicPromptExtractor {
         return content.substring(start, end + 1);
     }
 
+    findTemplateInAST(ast, content, searchString) {
+        let result = null;
+        
+        const walk = (node, parent = null) => {
+            if (!node || typeof node !== 'object') return;
+            
+            if (node.type === 'TemplateLiteral') {
+                // Extract the template literal text from the source
+                const templateText = content.substring(node.start, node.end);
+                if (templateText.includes(searchString)) {
+                    result = { node, template: templateText, parent };
+                    return;
+                }
+            }
+            
+            // Recursively walk child nodes
+            for (const key in node) {
+                if (key === 'parent') continue; // Avoid circular references
+                const child = node[key];
+                if (Array.isArray(child)) {
+                    child.forEach(grandchild => walk(grandchild, node));
+                } else if (child && typeof child === 'object' && child.type) {
+                    walk(child, node);
+                }
+            }
+        };
+        
+        walk(ast);
+        return result;
+    }
+
+    buildASTScope(ast, targetNode) {
+        const scopes = [];
+        let currentPath = [];
+        
+        const findNodePath = (node, path = []) => {
+            if (node === targetNode) {
+                currentPath = [...path, node];
+                return true;
+            }
+            
+            for (const key in node) {
+                if (key === 'parent') continue;
+                const child = node[key];
+                if (Array.isArray(child)) {
+                    for (let i = 0; i < child.length; i++) {
+                        if (child[i] && typeof child[i] === 'object' && child[i].type) {
+                            if (findNodePath(child[i], [...path, node])) {
+                                return true;
+                            }
+                        }
+                    }
+                } else if (child && typeof child === 'object' && child.type) {
+                    if (findNodePath(child, [...path, node])) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        
+        findNodePath(ast);
+        
+        // Build scope chain from root to target
+        currentPath.forEach(node => {
+            const scope = { vars: {}, node };
+            
+            // Extract variable declarations in this scope
+            this.extractVariableDeclarations(node, scope);
+            scopes.push(scope);
+        });
+        
+        return scopes;
+    }
+
+    extractVariableDeclarations(node, scope) {
+        if (!node || typeof node !== 'object') return;
+        
+        // Handle different types of variable declarations
+        if (node.type === 'VariableDeclaration') {
+            node.declarations.forEach(declarator => {
+                if (declarator.id && declarator.id.type === 'Identifier' && declarator.init) {
+                    const varName = declarator.id.name;
+                    const value = this.extractLiteralValue(declarator.init);
+                    if (value !== null) {
+                        scope.vars[varName] = value;
+                    }
+                }
+            });
+        }
+        
+        // Handle function parameters
+        if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') {
+            if (node.params) {
+                node.params.forEach(param => {
+                    if (param.type === 'Identifier') {
+                        scope.vars[param.name] = '<parameter>'; // Mark as parameter
+                    }
+                });
+            }
+        }
+        
+        // Recursively check child nodes in the same scope
+        for (const key in node) {
+            if (key === 'parent') continue;
+            const child = node[key];
+            
+            // Don't descend into new scopes (functions, blocks with their own scope)
+            if (child && typeof child === 'object' && child.type) {
+                if (!this.createsNewScope(child.type)) {
+                    this.extractVariableDeclarations(child, scope);
+                }
+            } else if (Array.isArray(child)) {
+                child.forEach(grandchild => {
+                    if (grandchild && typeof grandchild === 'object' && grandchild.type && !this.createsNewScope(grandchild.type)) {
+                        this.extractVariableDeclarations(grandchild, scope);
+                    }
+                });
+            }
+        }
+    }
+
+    createsNewScope(nodeType) {
+        return ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'BlockStatement', 'ForStatement', 'WhileStatement'].includes(nodeType);
+    }
+
+    extractLiteralValue(node) {
+        if (!node) return null;
+        
+        switch (node.type) {
+            case 'Literal':
+                return node.value;
+            case 'TemplateLiteral':
+                // For simple template literals without expressions
+                if (node.expressions.length === 0 && node.quasis.length === 1) {
+                    return node.quasis[0].value.cooked;
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    resolveTemplateVariables(templateString, scopes) {
+        return templateString.replace(/\$\{([^}]+)\}/g, (match, expression) => {
+            const varName = expression.trim();
+            
+            // Look for variable in scope chain (innermost to outermost)
+            for (let i = scopes.length - 1; i >= 0; i--) {
+                const scope = scopes[i];
+                if (scope.vars.hasOwnProperty(varName)) {
+                    const value = scope.vars[varName];
+                    if (value !== '<parameter>') {
+                        return value;
+                    }
+                }
+            }
+            
+            // Variable not found, return original
+            return match;
+        });
+    }
+
     async getPackageMetadata() {
         if (this.packageData) {
             return this.packageData;
@@ -199,7 +391,7 @@ class DynamicPromptExtractor {
             
             // Extract content and find prompt
             const content = new TextDecoder().decode(cliFile.content);
-            const prompt = this.extractPrompt(content);
+            const prompt = await this.extractPrompt(content);
             
             if (!prompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
@@ -664,7 +856,9 @@ class DiffReader {
 
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+// Browser-only code
+if (typeof window !== 'undefined') {
+    window.addEventListener('DOMContentLoaded', () => {
     // Wait for both Diff library and pako to be available
     const waitForLibraries = () => {
         if (window.Diff && window.pako) {
@@ -702,10 +896,12 @@ window.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem('theme', newTheme);
         });
     }
-});
+    });
+}
 
-// Copy install command function
+// Copy install command function (browser-only)
 function copyInstallCommand() {
+    if (typeof window === 'undefined') return;
     const command = 'npm install -g @anthropic-ai/claude-code';
     const button = document.getElementById('copy-install-btn');
     
@@ -773,4 +969,20 @@ function copyInstallCommand() {
             document.body.removeChild(textArea);
         }
     }
+}
+
+// Export classes for module usage
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { DynamicPromptExtractor, DiffReader };
+}
+
+// Also make available as ES modules
+if (typeof window === 'undefined') {
+    // Node.js environment
+    global.DynamicPromptExtractor = DynamicPromptExtractor;
+    global.DiffReader = DiffReader;
+} else {
+    // Browser environment - also export for ES modules
+    window.DynamicPromptExtractor = DynamicPromptExtractor;
+    window.DiffReader = DiffReader;
 }

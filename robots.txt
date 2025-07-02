@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://claude-code-system-prompts.jonathanc.net/sitemap.xml

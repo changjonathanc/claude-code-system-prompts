@@ -471,6 +471,11 @@ class DynamicPromptExtractor {
                 content,
                 'Executes a given bash command in a persistent shell'
             );
+            // New: extract Init prompt (identified by unique keyword)
+            const initPrompt = await this.extractPrompt(
+                content,
+                'Please analyze this codebase and create a CLAUDE.md file'
+            );
 
             if (!systemPrompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
@@ -480,9 +485,11 @@ class DynamicPromptExtractor {
                 systemPrompt,
                 compactPrompt: compactPrompt || null,
                 bashPrompt: bashPrompt || null,
+                initPrompt: initPrompt || null,
                 systemLength: systemPrompt.length,
                 compactLength: compactPrompt ? compactPrompt.length : 0,
-                bashLength: bashPrompt ? bashPrompt.length : 0
+                bashLength: bashPrompt ? bashPrompt.length : 0,
+                initLength: initPrompt ? initPrompt.length : 0
             };
 
             // Cache the result
@@ -492,7 +499,8 @@ class DynamicPromptExtractor {
                 `✓ Extracted prompts for ${version} ` +
                 `(system: ${result.systemLength} chars, ` +
                 `compact: ${result.compactLength} chars, ` +
-                `bash: ${result.bashLength} chars)`
+                `bash: ${result.bashLength} chars, ` +
+                `init: ${result.initLength} chars)`
             );
             return result;
 
@@ -766,6 +774,17 @@ class DiffReader {
                     if (!prompt2) missing.push(version2);
                     throw new Error(`Bash tools prompt not found in version(s): ${missing.join(', ')}`);
                 }
+            } else if (this.currentTab === 'init') {
+                prompt1 = content1.initPrompt;
+                prompt2 = content2.initPrompt;
+                promptType = 'Init';
+
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`/init prompt not found in version(s): ${missing.join(', ')}`);
+                }
             } else {
                 prompt1 = content1.systemPrompt;
                 prompt2 = content2.systemPrompt;
@@ -777,7 +796,9 @@ class DiffReader {
                 content1.compactPrompt ||
                 content2.compactPrompt ||
                 content1.bashPrompt ||
-                content2.bashPrompt;
+                content2.bashPrompt ||
+                content1.initPrompt ||
+                content2.initPrompt;
             this.elements.promptTabs.style.display = hasAltPrompt ? 'flex' : 'none';
 
             // Update file names in the diff header with character counts
@@ -788,6 +809,9 @@ class DiffReader {
             } else if (this.currentTab === 'bash') {
                 char1 = content1.bashLength;
                 char2 = content2.bashLength;
+            } else if (this.currentTab === 'init') {
+                char1 = content1.initLength;
+                char2 = content2.initLength;
             } else {
                 char1 = content1.systemLength;
                 char2 = content2.systemLength;

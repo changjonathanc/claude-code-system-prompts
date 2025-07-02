@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    
+
     <!-- Primary Meta Tags -->
     <title>Claude Code System Prompts – Diff Viewer</title>
     <meta name="title" content="Claude Code System Prompts – Diff Viewer">
@@ -11,10 +11,10 @@
     <meta name="keywords" content="Claude Code, system prompts, diff viewer, Anthropic, AI prompts, version comparison, code diff, prompt engineering">
     <meta name="author" content="Jonathan Chang">
     <meta name="robots" content="index, follow">
-    
+
     <!-- Canonical URL -->
     <link rel="canonical" href="https://claude-code-system-prompts.jonathanc.net/">
-    
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://claude-code-system-prompts.jonathanc.net/">
@@ -26,7 +26,7 @@
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="Claude Code System Prompts - Interactive diff viewer for comparing AI prompts">
-    
+
     <!-- Twitter -->
     <meta property="twitter:card" content="summary">
     <meta property="twitter:url" content="https://claude-code-system-prompts.jonathanc.net/">
@@ -36,27 +36,27 @@
     <meta property="twitter:site" content="@changjonathanc">
     <meta property="twitter:image" content="https://claude-code-system-prompts.jonathanc.net/social.png">
     <meta property="twitter:image:alt" content="Claude Code System Prompts - Interactive diff viewer for comparing AI prompts">
-    
+
     <!-- Additional SEO -->
     <meta name="theme-color" content="#0d1117">
     <meta name="msapplication-TileColor" content="#0d1117">
     <meta name="application-name" content="Claude Code System Prompts">
-    
+
     <!-- Preconnects for performance -->
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    
+
     <!-- Stylesheets -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
     <link rel="stylesheet" href="styles.css">
-    
+
     <!-- PWA Manifest -->
     <link rel="manifest" href="site.webmanifest">
-    
+
     <!-- Favicon using emoji as placeholder -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔍</text></svg>">
-    
+
     <!-- Schema.org structured data -->
     <script type="application/ld+json">
     {
@@ -103,7 +103,7 @@
                     <p class="disclaimer"><small><i class="fas fa-info-circle"></i> All prompts are dynamically extracted from npm packages on the client side. This website does not host any prompts or source code.</small></p>
                 </div>
             </div>
-            
+
             <div class="file-navigation">
                 <div class="file-selectors">
                     <div class="file-selector">
@@ -131,6 +131,7 @@
             <div class="prompt-tabs" id="prompt-tabs" style="display: none;">
                 <button class="tab-button active" data-tab="system">System Prompt</button>
                 <button class="tab-button" data-tab="compact">Conversation Compacting</button>
+                <button class="tab-button" data-tab="bash">Bash Tools Prompt</button>
             </div>
 
             <div id="summary" class="summary" aria-live="polite"></div>
@@ -180,7 +181,7 @@
             </div>
 
             <div id="error" class="error-message" aria-live="assertive"></div>
-            
+
             <div class="cli-install-section">
                 <div class="cli-install-card">
                     <span class="cli-prompt">Try Claude Code:</span>

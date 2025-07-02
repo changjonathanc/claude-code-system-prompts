@@ -9,34 +9,34 @@ class DynamicPromptExtractor {
         const files = [];
         const view = new Uint8Array(buffer);
         let offset = 0;
-        
+
         while (offset < view.length) {
             // TAR header is 512 bytes
             if (offset + 512 > view.length) break;
-            
+
             // Check for end of archive (two consecutive zero blocks)
             const isZeroBlock = view.slice(offset, offset + 512).every(byte => byte === 0);
             if (isZeroBlock) break;
-            
+
             // Parse TAR header
             const nameBytes = view.slice(offset, offset + 100);
             const name = new TextDecoder().decode(nameBytes).replace(/\0.*$/, '');
-            
+
             if (!name) {
                 offset += 512;
                 continue;
             }
-            
+
             // Get file size (octal string at offset 124, 12 bytes)
             const sizeBytes = view.slice(offset + 124, offset + 136);
             const sizeStr = new TextDecoder().decode(sizeBytes).replace(/\0.*$/, '').replace(/\s/g, '');
             const size = parseInt(sizeStr, 8) || 0;
-            
+
             // Get file type (offset 156)
             const typeFlag = String.fromCharCode(view[offset + 156]);
-            
+
             offset += 512; // Skip header
-            
+
             if (typeFlag === '0' || typeFlag === '' || typeFlag === '\0') { // Regular file
                 const content = view.slice(offset, offset + size);
                 files.push({
@@ -45,12 +45,12 @@ class DynamicPromptExtractor {
                     size: size
                 });
             }
-            
+
             // Round up to next 512-byte boundary
             const paddedSize = Math.ceil(size / 512) * 512;
             offset += paddedSize;
         }
-        
+
         return files;
     }
 
@@ -65,7 +65,7 @@ class DynamicPromptExtractor {
                 }
                 return astResult;
             }
-            
+
             // Fall back to simple string parsing if AST parsing fails
             return this.extractPromptSimple(content, searchString);
         } catch (error) {
@@ -94,10 +94,10 @@ class DynamicPromptExtractor {
                 // Node.js environment - use local package
                 acorn = await import('acorn');
             }
-            
+
             // Preprocess content to handle shebangs and other issues
             const cleanContent = this.preprocessContent(content);
-            
+
             // Try different parsing strategies for robustness
             let ast;
             const parseOptions = [
@@ -112,7 +112,7 @@ class DynamicPromptExtractor {
                 // Very permissive
                 { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, allowReserved: true }
             ];
-            
+
             for (const options of parseOptions) {
                 try {
                     ast = acorn.parse(cleanContent, options);
@@ -122,18 +122,18 @@ class DynamicPromptExtractor {
                     continue;
                 }
             }
-            
+
             if (!ast) {
                 throw new Error('All parsing strategies failed');
             }
-            
+
             // Walk AST to find template literal containing searchString
             const result = this.findTemplateInAST(ast, cleanContent, searchString);
             if (!result) return null;
-            
+
             // Build scope context at template position
             const scope = this.buildASTScope(ast, result.node);
-            
+
             // Resolve template variables
             return this.resolveTemplateVariables(result.template, scope);
         } catch (error) {
@@ -147,7 +147,7 @@ class DynamicPromptExtractor {
 
     preprocessContent(content) {
         let processed = content;
-        
+
         // Remove shebang lines (#!/usr/bin/env node, etc.)
         if (processed.startsWith('#!')) {
             const firstNewline = processed.indexOf('\n');
@@ -155,13 +155,13 @@ class DynamicPromptExtractor {
                 processed = processed.substring(firstNewline + 1);
             }
         }
-        
+
         // Handle other potential parsing issues
         // Remove UTF-8 BOM if present
         if (processed.charCodeAt(0) === 0xFEFF) {
             processed = processed.substring(1);
         }
-        
+
         return processed;
     }
 
@@ -170,18 +170,18 @@ class DynamicPromptExtractor {
         if (index === -1) {
             return null;
         }
-        
+
         // Look for template literal backticks first (most common case)
         let start = index;
         while (start > 0 && content[start] !== '`') {
             start--;
         }
-        
+
         if (content[start] === '`') {
             // Found template literal, find the closing backtick
             let end = index + searchString.length;
             let depth = 0;
-            
+
             while (end < content.length) {
                 if (content[end] === '`' && depth === 0) {
                     break;
@@ -197,25 +197,25 @@ class DynamicPromptExtractor {
                     end++;
                 }
             }
-            
+
             if (end < content.length) {
                 return content.substring(start, end + 1);
             }
         }
-        
+
         // Fall back to quote-based parsing
         start = index;
         while (start > 0 && !['`', '"', "'"].includes(content[start])) {
             start--;
         }
-        
+
         if (start === 0 && !['`', '"', "'"].includes(content[start])) {
             return null;
         }
-        
+
         const startChar = content[start];
         let end = index + searchString.length;
-        
+
         while (end < content.length) {
             if (content[end] === startChar) {
                 break;
@@ -225,20 +225,20 @@ class DynamicPromptExtractor {
                 end++;
             }
         }
-        
+
         if (end >= content.length) {
             return null;
         }
-        
+
         return content.substring(start, end + 1);
     }
 
     findTemplateInAST(ast, content, searchString) {
         let result = null;
-        
+
         const walk = (node, parent = null) => {
             if (!node || typeof node !== 'object') return;
-            
+
             if (node.type === 'TemplateLiteral') {
                 // Extract the template literal text from the source
                 const templateText = content.substring(node.start, node.end);
@@ -247,7 +247,7 @@ class DynamicPromptExtractor {
                     return;
                 }
             }
-            
+
             // Recursively walk child nodes
             for (const key in node) {
                 if (key === 'parent') continue; // Avoid circular references
@@ -259,7 +259,7 @@ class DynamicPromptExtractor {
                 }
             }
         };
-        
+
         walk(ast);
         return result;
     }
@@ -267,13 +267,13 @@ class DynamicPromptExtractor {
     buildASTScope(ast, targetNode) {
         const scopes = [];
         let currentPath = [];
-        
+
         const findNodePath = (node, path = []) => {
             if (node === targetNode) {
                 currentPath = [...path, node];
                 return true;
             }
-            
+
             for (const key in node) {
                 if (key === 'parent') continue;
                 const child = node[key];
@@ -293,24 +293,24 @@ class DynamicPromptExtractor {
             }
             return false;
         };
-        
+
         findNodePath(ast);
-        
+
         // Build scope chain from root to target
         currentPath.forEach(node => {
             const scope = { vars: {}, node };
-            
+
             // Extract variable declarations in this scope
             this.extractVariableDeclarations(node, scope);
             scopes.push(scope);
         });
-        
+
         return scopes;
     }
 
     extractVariableDeclarations(node, scope) {
         if (!node || typeof node !== 'object') return;
-        
+
         // Handle different types of variable declarations
         if (node.type === 'VariableDeclaration') {
             node.declarations.forEach(declarator => {
@@ -323,7 +323,7 @@ class DynamicPromptExtractor {
                 }
             });
         }
-        
+
         // Handle function parameters
         if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') {
             if (node.params) {
@@ -334,12 +334,12 @@ class DynamicPromptExtractor {
                 });
             }
         }
-        
+
         // Recursively check child nodes in the same scope
         for (const key in node) {
             if (key === 'parent') continue;
             const child = node[key];
-            
+
             // Don't descend into new scopes (functions, blocks with their own scope)
             if (child && typeof child === 'object' && child.type) {
                 if (!this.createsNewScope(child.type)) {
@@ -361,7 +361,7 @@ class DynamicPromptExtractor {
 
     extractLiteralValue(node) {
         if (!node) return null;
-        
+
         switch (node.type) {
             case 'Literal':
                 return node.value;
@@ -379,7 +379,7 @@ class DynamicPromptExtractor {
     resolveTemplateVariables(templateString, scopes) {
         return templateString.replace(/\$\{([^}]+)\}/g, (match, expression) => {
             const varName = expression.trim();
-            
+
             // Look for variable in scope chain (innermost to outermost)
             for (let i = scopes.length - 1; i >= 0; i--) {
                 const scope = scopes[i];
@@ -390,7 +390,7 @@ class DynamicPromptExtractor {
                     }
                 }
             }
-            
+
             // Variable not found, return original
             return match;
         });
@@ -405,7 +405,7 @@ class DynamicPromptExtractor {
         if (!response.ok) {
             throw new Error(`Failed to get package metadata: ${response.status}`);
         }
-        
+
         this.packageData = await response.json();
         return this.packageData;
     }
@@ -421,22 +421,22 @@ class DynamicPromptExtractor {
         try {
             // Get package metadata
             const packageData = await this.getPackageMetadata();
-            
+
             if (!packageData.versions[version]) {
                 throw new Error(`Version ${version} not found`);
             }
 
             // Get tarball URL
             const tarballUrl = packageData.versions[version].dist.tarball;
-            
+
             // Download tarball
             const tarballResponse = await fetch(tarballUrl);
             if (!tarballResponse.ok) {
                 throw new Error(`Failed to download tarball: ${tarballResponse.status}`);
             }
-            
+
             const tarballData = await tarballResponse.arrayBuffer();
-            
+
             // Decompress gzip
             const uint8Array = new Uint8Array(tarballData);
             let pako;
@@ -448,25 +448,30 @@ class DynamicPromptExtractor {
                 pako = require('pako');
             }
             const decompressed = pako.ungzip(uint8Array);
-            
+
             // Parse TAR
             const files = this.parseTarBuffer(decompressed.buffer.slice(decompressed.byteOffset, decompressed.byteOffset + decompressed.byteLength));
-            
+
             // Look for CLI files
-            const cliFile = files.find(file => 
-                file.name === 'package/cli.js' || 
+            const cliFile = files.find(file =>
+                file.name === 'package/cli.js' ||
                 file.name === 'package/cli.mjs'
             );
-            
+
             if (!cliFile) {
                 throw new Error(`No CLI file found in version ${version}`);
             }
-            
+
             // Extract content and find both prompts
             const content = new TextDecoder().decode(cliFile.content);
             const systemPrompt = await this.extractPrompt(content);
             const compactPrompt = this.extractConversationCompactPrompt(content);
-            
+            // New: extract Bash tools prompt (identified by unique keyword)
+            const bashPrompt = await this.extractPrompt(
+                content,
+                'Executes a given bash command in a persistent shell'
+            );
+
             if (!systemPrompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
             }
@@ -474,14 +479,21 @@ class DynamicPromptExtractor {
             const result = {
                 systemPrompt,
                 compactPrompt: compactPrompt || null,
+                bashPrompt: bashPrompt || null,
                 systemLength: systemPrompt.length,
-                compactLength: compactPrompt ? compactPrompt.length : 0
+                compactLength: compactPrompt ? compactPrompt.length : 0,
+                bashLength: bashPrompt ? bashPrompt.length : 0
             };
 
             // Cache the result
             this.cache.set(version, result);
-            
-            console.log(`✓ Extracted prompts for ${version} (system: ${result.systemLength} chars, compact: ${result.compactLength} chars)`);
+
+            console.log(
+                `✓ Extracted prompts for ${version} ` +
+                `(system: ${result.systemLength} chars, ` +
+                `compact: ${result.compactLength} chars, ` +
+                `bash: ${result.bashLength} chars)`
+            );
             return result;
 
         } catch (error) {
@@ -564,13 +576,13 @@ class DiffReader {
                 <small>Fetching package metadata from npm registry</small>
             `);
             console.log('Loading available versions from npm registry...');
-            
+
             const versions = await this.promptExtractor.getAvailableVersions();
             this.files = versions; // Now contains objects with version and date
-            
+
             console.log(`Loaded ${this.files.length} versions from npm registry`);
             this.populateDropdowns();
-            
+
         } catch (error) {
             console.error('Failed to load versions:', error);
             this.showError(`Failed to load versions: ${error.message}`);
@@ -581,7 +593,7 @@ class DiffReader {
 
     populateDropdowns() {
         const { file1Select, file2Select } = this.elements;
-        
+
         console.log('Populating dropdowns with', this.files.length, 'files');
 
         // Clear dropdowns but keep placeholders
@@ -590,7 +602,7 @@ class DiffReader {
 
         // Add file options
         this.files.forEach(fileInfo => {
-            const displayText = fileInfo.date 
+            const displayText = fileInfo.date
                 ? `${fileInfo.version} (${fileInfo.date})`
                 : fileInfo.version;
             const option1 = new Option(displayText, fileInfo.version);
@@ -598,7 +610,7 @@ class DiffReader {
             file1Select.appendChild(option1);
             file2Select.appendChild(option2);
         });
-        
+
         console.log('Dropdowns populated. File1 has', file1Select.options.length, 'options');
     }
 
@@ -644,7 +656,7 @@ class DiffReader {
 
     setupTabs() {
         const tabButtons = document.querySelectorAll('.tab-button');
-        
+
         tabButtons.forEach(button => {
             button.addEventListener('click', () => {
                 const newTab = button.dataset.tab;
@@ -657,7 +669,7 @@ class DiffReader {
 
     switchTab(tabType) {
         this.currentTab = tabType;
-        
+
         // Update tab button states
         const tabButtons = document.querySelectorAll('.tab-button');
         tabButtons.forEach(button => {
@@ -697,7 +709,7 @@ class DiffReader {
             console.log(`Dynamically extracting prompt for ${version}...`);
             const result = await this.promptExtractor.extractPromptFromVersion(version);
             this.fileContents.set(version, result);
-            
+
             return result;
         } catch (error) {
             console.error(`Error loading ${version}:`, error);
@@ -734,7 +746,7 @@ class DiffReader {
                 prompt1 = content1.compactPrompt;
                 prompt2 = content2.compactPrompt;
                 promptType = 'Conversation Compacting';
-                
+
                 // Check if both versions have compact prompts
                 if (!prompt1 || !prompt2) {
                     const missing = [];
@@ -742,20 +754,45 @@ class DiffReader {
                     if (!prompt2) missing.push(version2);
                     throw new Error(`Conversation compacting prompt not found in version(s): ${missing.join(', ')}`);
                 }
+            } else if (this.currentTab === 'bash') {
+                prompt1 = content1.bashPrompt;
+                prompt2 = content2.bashPrompt;
+                promptType = 'Bash Tools';
+
+                // Check if both versions have bash prompts
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Bash tools prompt not found in version(s): ${missing.join(', ')}`);
+                }
             } else {
                 prompt1 = content1.systemPrompt;
                 prompt2 = content2.systemPrompt;
                 promptType = 'System';
             }
 
-            // Show tabs if at least one version has compact prompt
-            const hasCompact = content1.compactPrompt || content2.compactPrompt;
-            this.elements.promptTabs.style.display = hasCompact ? 'flex' : 'none';
+            // Show tabs if at least one version has an alternate prompt (compact or bash)
+            const hasAltPrompt =
+                content1.compactPrompt ||
+                content2.compactPrompt ||
+                content1.bashPrompt ||
+                content2.bashPrompt;
+            this.elements.promptTabs.style.display = hasAltPrompt ? 'flex' : 'none';
 
             // Update file names in the diff header with character counts
-            const char1 = this.currentTab === 'compact' ? content1.compactLength : content1.systemLength;
-            const char2 = this.currentTab === 'compact' ? content2.compactLength : content2.systemLength;
-            
+            let char1, char2;
+            if (this.currentTab === 'compact') {
+                char1 = content1.compactLength;
+                char2 = content2.compactLength;
+            } else if (this.currentTab === 'bash') {
+                char1 = content1.bashLength;
+                char2 = content2.bashLength;
+            } else {
+                char1 = content1.systemLength;
+                char2 = content2.systemLength;
+            }
+
             this.elements.file1Name.textContent = `${promptType} - Version ${version1} (${char1.toLocaleString()} characters)`;
             this.elements.file2Name.textContent = `${promptType} - Version ${version2} (${char2.toLocaleString()} characters)`;
 
@@ -952,16 +989,16 @@ class DiffReader {
 
     createTableRow(leftContent, rightContent) {
         const row = document.createElement('tr');
-        
+
         const leftCell = document.createElement('td');
         leftCell.appendChild(leftContent);
-        
+
         const rightCell = document.createElement('td');
         rightCell.appendChild(rightContent);
-        
+
         row.appendChild(leftCell);
         row.appendChild(rightCell);
-        
+
         return row;
     }
 
@@ -1022,7 +1059,7 @@ class DiffReader {
             // Get all table rows
             const rows = this.elements.diffTable.querySelectorAll('tr');
             const content = [];
-            
+
             rows.forEach(row => {
                 const cells = row.querySelectorAll('td');
                 if (cells.length >= 2) {
@@ -1036,9 +1073,9 @@ class DiffReader {
 
             const textToCopy = content.join('\n');
             const button = side === 'left' ? this.elements.copyLeftBtn : this.elements.copyRightBtn;
-            
+
             this.copyToClipboard(textToCopy, button);
-            
+
         } catch (error) {
             console.error('Failed to copy side content:', error);
             this.showError(`Failed to copy ${side} side content: ${error.message}`);
@@ -1073,7 +1110,7 @@ class DiffReader {
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        
+
         try {
             const successful = document.execCommand('copy');
             if (successful) {
@@ -1092,7 +1129,7 @@ class DiffReader {
     showCopySuccess(button) {
         button.innerHTML = '<i class="fas fa-check"></i>';
         button.classList.add('copied');
-        
+
         setTimeout(() => {
             button.innerHTML = '<i class="fas fa-copy"></i>';
             button.classList.remove('copied');
@@ -1101,7 +1138,7 @@ class DiffReader {
 
     showCopyError(button) {
         button.innerHTML = '<i class="fas fa-times"></i>';
-        
+
         setTimeout(() => {
             button.innerHTML = '<i class="fas fa-copy"></i>';
         }, 2000);
@@ -1157,22 +1194,22 @@ function copyInstallCommand() {
     if (typeof window === 'undefined') return;
     const command = 'npm install -g @anthropic-ai/claude-code';
     const button = document.getElementById('copy-install-btn');
-    
+
     console.log('Copy function called, command:', command);
     console.log('Button found:', button);
-    
+
     if (!button) {
         console.error('Copy button not found');
         return;
     }
-    
+
     // Try modern clipboard API first
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(command).then(() => {
             console.log('Clipboard API success');
             button.innerHTML = '<i class="fas fa-check"></i>';
             button.classList.add('copied');
-            
+
             setTimeout(() => {
                 button.innerHTML = '<i class="fas fa-copy"></i>';
                 button.classList.remove('copied');
@@ -1185,7 +1222,7 @@ function copyInstallCommand() {
         console.log('Using fallback copy method');
         fallbackCopy();
     }
-    
+
     function fallbackCopy() {
         const textArea = document.createElement('textarea');
         textArea.value = command;
@@ -1195,15 +1232,15 @@ function copyInstallCommand() {
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        
+
         try {
             const successful = document.execCommand('copy');
             console.log('Fallback copy result:', successful);
-            
+
             if (successful) {
                 button.innerHTML = '<i class="fas fa-check"></i>';
                 button.classList.add('copied');
-                
+
                 setTimeout(() => {
                     button.innerHTML = '<i class="fas fa-copy"></i>';
                     button.classList.remove('copied');
@@ -1214,7 +1251,7 @@ function copyInstallCommand() {
         } catch (fallbackErr) {
             console.error('Fallback copy failed:', fallbackErr);
             button.innerHTML = '<i class="fas fa-times"></i>';
-            
+
             setTimeout(() => {
                 button.innerHTML = '<i class="fas fa-copy"></i>';
             }, 2000);

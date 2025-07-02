@@ -77,6 +77,12 @@ class DynamicPromptExtractor {
         }
     }
 
+    extractConversationCompactPrompt(content) {
+        // Look for the conversation compacting prompt
+        const searchString = 'Your task is to create a detailed summary of the conversation';
+        return this.extractPromptSimple(content, searchString);
+    }
+
     async extractPromptAST(content, searchString) {
         try {
             // Dynamic import acorn for proper AST parsing
@@ -456,19 +462,27 @@ class DynamicPromptExtractor {
                 throw new Error(`No CLI file found in version ${version}`);
             }
             
-            // Extract content and find prompt
+            // Extract content and find both prompts
             const content = new TextDecoder().decode(cliFile.content);
-            const prompt = await this.extractPrompt(content);
+            const systemPrompt = await this.extractPrompt(content);
+            const compactPrompt = this.extractConversationCompactPrompt(content);
             
-            if (!prompt) {
+            if (!systemPrompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
             }
 
-            // Cache the result - just the prompt without metadata
-            this.cache.set(version, { prompt, length: prompt.length });
+            const result = {
+                systemPrompt,
+                compactPrompt: compactPrompt || null,
+                systemLength: systemPrompt.length,
+                compactLength: compactPrompt ? compactPrompt.length : 0
+            };
+
+            // Cache the result
+            this.cache.set(version, result);
             
-            console.log(`✓ Extracted prompt for ${version} (${prompt.length} characters)`);
-            return { prompt, length: prompt.length };
+            console.log(`✓ Extracted prompts for ${version} (system: ${result.systemLength} chars, compact: ${result.compactLength} chars)`);
+            return result;
 
         } catch (error) {
             console.error(`Failed to extract prompt for ${version}:`, error);
@@ -511,6 +525,7 @@ class DiffReader {
         this.fileContents = new Map();
         this.initialFiles = { base: baseFile, compare: compareFile };
         this.promptExtractor = new DynamicPromptExtractor();
+        this.currentTab = 'system'; // 'system' or 'compact'
 
         this.elements = {
             file1Select: document.getElementById('file1'),
@@ -522,7 +537,8 @@ class DiffReader {
             diffTable: document.querySelector('#diff-table tbody'),
             file1Name: document.getElementById('file1-name'),
             file2Name: document.getElementById('file2-name'),
-            summary: document.getElementById('summary')
+            summary: document.getElementById('summary'),
+            promptTabs: document.getElementById('prompt-tabs')
         };
 
         this.init();
@@ -534,6 +550,7 @@ class DiffReader {
         this.elements.welcomeMessage.style.display = 'block';
         await this.loadFileList();
         this.setupEventListeners();
+        this.setupTabs();
         this.setDefaultSelection();
         console.log('DiffReader init completed');
     }
@@ -615,6 +632,36 @@ class DiffReader {
         });
     }
 
+    setupTabs() {
+        const tabButtons = document.querySelectorAll('.tab-button');
+        
+        tabButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const newTab = button.dataset.tab;
+                if (newTab !== this.currentTab) {
+                    this.switchTab(newTab);
+                }
+            });
+        });
+    }
+
+    switchTab(tabType) {
+        this.currentTab = tabType;
+        
+        // Update tab button states
+        const tabButtons = document.querySelectorAll('.tab-button');
+        tabButtons.forEach(button => {
+            button.classList.toggle('active', button.dataset.tab === tabType);
+        });
+
+        // Re-run comparison if we have selections
+        const version1 = this.elements.file1Select.value;
+        const version2 = this.elements.file2Select.value;
+        if (version1 && version2 && version1 !== version2) {
+            this.compareFiles();
+        }
+    }
+
     setDefaultSelection() {
         if (this.initialFiles.base && this.initialFiles.compare) {
             this.elements.file1Select.value = this.initialFiles.base;
@@ -671,11 +718,38 @@ class DiffReader {
                 this.loadFileContent(version2)
             ]);
 
-            // Update file names in the diff header with character counts
-            this.elements.file1Name.textContent = `Version ${version1} (${content1.length.toLocaleString()} characters)`;
-            this.elements.file2Name.textContent = `Version ${version2} (${content2.length.toLocaleString()} characters)`;
+            // Determine which prompt to compare based on current tab
+            let prompt1, prompt2, promptType;
+            if (this.currentTab === 'compact') {
+                prompt1 = content1.compactPrompt;
+                prompt2 = content2.compactPrompt;
+                promptType = 'Conversation Compacting';
+                
+                // Check if both versions have compact prompts
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Conversation compacting prompt not found in version(s): ${missing.join(', ')}`);
+                }
+            } else {
+                prompt1 = content1.systemPrompt;
+                prompt2 = content2.systemPrompt;
+                promptType = 'System';
+            }
 
-            this.renderDiff(content1.prompt, content2.prompt);
+            // Show tabs if at least one version has compact prompt
+            const hasCompact = content1.compactPrompt || content2.compactPrompt;
+            this.elements.promptTabs.style.display = hasCompact ? 'flex' : 'none';
+
+            // Update file names in the diff header with character counts
+            const char1 = this.currentTab === 'compact' ? content1.compactLength : content1.systemLength;
+            const char2 = this.currentTab === 'compact' ? content2.compactLength : content2.systemLength;
+            
+            this.elements.file1Name.textContent = `${promptType} - Version ${version1} (${char1.toLocaleString()} characters)`;
+            this.elements.file2Name.textContent = `${promptType} - Version ${version2} (${char2.toLocaleString()} characters)`;
+
+            this.renderDiff(prompt1, prompt2);
             this.updateSummary();
         } catch (error) {
             this.showError(`Failed to load files: ${error.message}`);

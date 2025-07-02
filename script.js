@@ -538,7 +538,9 @@ class DiffReader {
             file1Name: document.getElementById('file1-name'),
             file2Name: document.getElementById('file2-name'),
             summary: document.getElementById('summary'),
-            promptTabs: document.getElementById('prompt-tabs')
+            promptTabs: document.getElementById('prompt-tabs'),
+            copyLeftBtn: document.getElementById('copy-left-btn'),
+            copyRightBtn: document.getElementById('copy-right-btn')
         };
 
         this.init();
@@ -630,6 +632,14 @@ class DiffReader {
             if (e.key === 'j') this.scrollLine(1);
             if (e.key === 'k') this.scrollLine(-1);
         });
+
+        // Setup copy side buttons
+        if (this.elements.copyLeftBtn) {
+            this.elements.copyLeftBtn.addEventListener('click', () => this.copySideContent('left'));
+        }
+        if (this.elements.copyRightBtn) {
+            this.elements.copyRightBtn.addEventListener('click', () => this.copySideContent('right'));
+        }
     }
 
     setupTabs() {
@@ -1005,6 +1015,96 @@ class DiffReader {
             ? lines.find(l => l.offsetTop > top + 5)
             : [...lines].reverse().find(l => l.offsetTop < top - 5);
         if (next) next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    copySideContent(side) {
+        try {
+            // Get all table rows
+            const rows = this.elements.diffTable.querySelectorAll('tr');
+            const content = [];
+            
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 2) {
+                    const targetCell = side === 'left' ? cells[0] : cells[1];
+                    const lineContent = targetCell.querySelector('.line-content');
+                    if (lineContent && lineContent.textContent.trim()) {
+                        content.push(lineContent.textContent);
+                    }
+                }
+            });
+
+            const textToCopy = content.join('\n');
+            const button = side === 'left' ? this.elements.copyLeftBtn : this.elements.copyRightBtn;
+            
+            this.copyToClipboard(textToCopy, button);
+            
+        } catch (error) {
+            console.error('Failed to copy side content:', error);
+            this.showError(`Failed to copy ${side} side content: ${error.message}`);
+        }
+    }
+
+    copyToClipboard(text, button) {
+        if (!text.trim()) {
+            this.showError('No content to copy');
+            return;
+        }
+
+        // Try modern clipboard API first
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+                this.showCopySuccess(button);
+            }).catch((err) => {
+                console.error('Clipboard API failed:', err);
+                this.fallbackCopy(text, button);
+            });
+        } else {
+            this.fallbackCopy(text, button);
+        }
+    }
+
+    fallbackCopy(text, button) {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'absolute';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                this.showCopySuccess(button);
+            } else {
+                throw new Error('execCommand failed');
+            }
+        } catch (fallbackErr) {
+            console.error('Fallback copy failed:', fallbackErr);
+            this.showCopyError(button);
+        } finally {
+            document.body.removeChild(textArea);
+        }
+    }
+
+    showCopySuccess(button) {
+        button.innerHTML = '<i class="fas fa-check"></i>';
+        button.classList.add('copied');
+        
+        setTimeout(() => {
+            button.innerHTML = '<i class="fas fa-copy"></i>';
+            button.classList.remove('copied');
+        }, 2000);
+    }
+
+    showCopyError(button) {
+        button.innerHTML = '<i class="fas fa-times"></i>';
+        
+        setTimeout(() => {
+            button.innerHTML = '<i class="fas fa-copy"></i>';
+        }, 2000);
     }
 
 }

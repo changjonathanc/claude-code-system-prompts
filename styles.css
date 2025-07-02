@@ -228,6 +228,33 @@ body {
     border-color: #28a745;
 }
 
+.copy-side-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 8px;
+}
+
+.copy-side-btn:hover {
+    background-color: var(--link-hover-bg);
+    color: var(--link-color);
+    border-color: var(--link-color);
+}
+
+.copy-side-btn.copied {
+    background-color: rgba(40, 167, 69, 0.1);
+    color: #28a745;
+    border-color: #28a745;
+}
+
 .docs-link {
     color: var(--link-color);
     text-decoration: none;
@@ -343,6 +370,9 @@ body {
     color: var(--select-text);
     border-right: 1px solid var(--border-color);
     font-size: 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .file-header:last-child {

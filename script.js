@@ -1,3 +1,11 @@
+const PROMPT_MARKERS = {
+    systemPrompt: 'You are an interactive CLI tool',
+    compactPrompt: 'Your task is to create a detailed summary of the conversation',
+    bashPrompt: 'Executes a given bash command in a persistent shell',
+    initPrompt: 'Please analyze this codebase and create a CLAUDE.md file',
+    todoPrompt: 'Use this tool to create and manage a structured task list'
+};
+
 class DynamicPromptExtractor {
     constructor() {
         this.cache = new Map(); // Cache extracted prompts
@@ -75,12 +83,6 @@ class DynamicPromptExtractor {
             }
             return this.extractPromptSimple(content, searchString);
         }
-    }
-
-    extractConversationCompactPrompt(content) {
-        // Look for the conversation compacting prompt
-        const searchString = 'Your task is to create a detailed summary of the conversation';
-        return this.extractPromptSimple(content, searchString);
     }
 
     async extractPromptAST(content, searchString) {
@@ -421,7 +423,6 @@ class DynamicPromptExtractor {
         try {
             // Get package metadata
             const packageData = await this.getPackageMetadata();
-
             if (!packageData.versions[version]) {
                 throw new Error(`Version ${version} not found`);
             }
@@ -441,77 +442,52 @@ class DynamicPromptExtractor {
             const uint8Array = new Uint8Array(tarballData);
             let pako;
             if (typeof window !== 'undefined') {
-                // Browser environment - pako is loaded globally
-                pako = window.pako;
+                pako = window.pako; // Browser environment – pako is global
             } else {
-                // Node.js environment - require pako
-                pako = require('pako');
+                pako = require('pako'); // Node.js fallback
             }
             const decompressed = pako.ungzip(uint8Array);
 
             // Parse TAR
-            const files = this.parseTarBuffer(decompressed.buffer.slice(decompressed.byteOffset, decompressed.byteOffset + decompressed.byteLength));
-
-            // Look for CLI files
-            const cliFile = files.find(file =>
-                file.name === 'package/cli.js' ||
-                file.name === 'package/cli.mjs'
+            const files = this.parseTarBuffer(
+                decompressed.buffer.slice(
+                    decompressed.byteOffset,
+                    decompressed.byteOffset + decompressed.byteLength
+                )
             );
 
+            // Locate CLI file
+            const cliFile = files.find(f => f.name === 'package/cli.js' || f.name === 'package/cli.mjs');
             if (!cliFile) {
                 throw new Error(`No CLI file found in version ${version}`);
             }
 
-            // Extract content and find both prompts
+            // Extract prompts via the marker map
             const content = new TextDecoder().decode(cliFile.content);
-            const systemPrompt = await this.extractPrompt(content);
-            const compactPrompt = this.extractConversationCompactPrompt(content);
-            // New: extract Bash tools prompt (identified by unique keyword)
-            const bashPrompt = await this.extractPrompt(
-                content,
-                'Executes a given bash command in a persistent shell'
-            );
-            // New: extract Init prompt (identified by unique keyword)
-            const initPrompt = await this.extractPrompt(
-                content,
-                'Please analyze this codebase and create a CLAUDE.md file'
-            );
-            // New: extract Todo list prompt (identified by unique keyword)
-            const todoPrompt = await this.extractPrompt(
-                content,
-                'Use this tool to create and manage a structured task list'
-            );
+            const result = {};
+            for (const [key, marker] of Object.entries(PROMPT_MARKERS)) {
+                const prompt = await this.extractPrompt(content, marker);
+                result[key] = prompt || null;
+                const lenKey = key.replace('Prompt', 'Length');
+                result[lenKey] = prompt ? prompt.length : 0;
+            }
 
-            if (!systemPrompt) {
+            if (!result.systemPrompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
             }
 
-            const result = {
-                systemPrompt,
-                compactPrompt: compactPrompt || null,
-                bashPrompt: bashPrompt || null,
-                initPrompt: initPrompt || null,
-                todoPrompt: todoPrompt || null,
-                systemLength: systemPrompt.length,
-                compactLength: compactPrompt ? compactPrompt.length : 0,
-                bashLength: bashPrompt ? bashPrompt.length : 0,
-                initLength: initPrompt ? initPrompt.length : 0,
-                todoLength: todoPrompt ? todoPrompt.length : 0
-            };
-
-            // Cache the result
+            // Cache result
             this.cache.set(version, result);
 
             console.log(
                 `✓ Extracted prompts for ${version} ` +
-                `(system: ${result.systemLength} chars, ` +
-                `compact: ${result.compactLength} chars, ` +
-                `bash: ${result.bashLength} chars, ` +
-                `init: ${result.initLength} chars, ` +
-                `todo: ${result.todoLength} chars)`
+                    `(system: ${result.systemLength} chars, ` +
+                    `compact: ${result.compactLength} chars, ` +
+                    `bash: ${result.bashLength} chars, ` +
+                    `init: ${result.initLength} chars, ` +
+                    `todo: ${result.todoLength} chars)`
             );
             return result;
-
         } catch (error) {
             console.error(`Failed to extract prompt for ${version}:`, error);
             throw error;

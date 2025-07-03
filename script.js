@@ -476,6 +476,11 @@ class DynamicPromptExtractor {
                 content,
                 'Please analyze this codebase and create a CLAUDE.md file'
             );
+            // New: extract Todo list prompt (identified by unique keyword)
+            const todoPrompt = await this.extractPrompt(
+                content,
+                'Use this tool to create and manage a structured task list'
+            );
 
             if (!systemPrompt) {
                 throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
@@ -486,10 +491,12 @@ class DynamicPromptExtractor {
                 compactPrompt: compactPrompt || null,
                 bashPrompt: bashPrompt || null,
                 initPrompt: initPrompt || null,
+                todoPrompt: todoPrompt || null,
                 systemLength: systemPrompt.length,
                 compactLength: compactPrompt ? compactPrompt.length : 0,
                 bashLength: bashPrompt ? bashPrompt.length : 0,
-                initLength: initPrompt ? initPrompt.length : 0
+                initLength: initPrompt ? initPrompt.length : 0,
+                todoLength: todoPrompt ? todoPrompt.length : 0
             };
 
             // Cache the result
@@ -500,7 +507,8 @@ class DynamicPromptExtractor {
                 `(system: ${result.systemLength} chars, ` +
                 `compact: ${result.compactLength} chars, ` +
                 `bash: ${result.bashLength} chars, ` +
-                `init: ${result.initLength} chars)`
+                `init: ${result.initLength} chars, ` +
+                `todo: ${result.todoLength} chars)`
             );
             return result;
 
@@ -785,6 +793,17 @@ class DiffReader {
                     if (!prompt2) missing.push(version2);
                     throw new Error(`/init prompt not found in version(s): ${missing.join(', ')}`);
                 }
+            } else if (this.currentTab === 'todo') {
+                prompt1 = content1.todoPrompt;
+                prompt2 = content2.todoPrompt;
+                promptType = 'Todo tool';
+
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Todo list prompt not found in version(s): ${missing.join(', ')}`);
+                }
             } else {
                 prompt1 = content1.systemPrompt;
                 prompt2 = content2.systemPrompt;
@@ -798,7 +817,9 @@ class DiffReader {
                 content1.bashPrompt ||
                 content2.bashPrompt ||
                 content1.initPrompt ||
-                content2.initPrompt;
+                content2.initPrompt ||
+                content1.todoPrompt ||
+                content2.todoPrompt;
             this.elements.promptTabs.style.display = hasAltPrompt ? 'flex' : 'none';
 
             // Update file names in the diff header with character counts
@@ -812,6 +833,9 @@ class DiffReader {
             } else if (this.currentTab === 'init') {
                 char1 = content1.initLength;
                 char2 = content2.initLength;
+            } else if (this.currentTab === 'todo') {
+                char1 = content1.todoLength;
+                char2 = content2.todoLength;
             } else {
                 char1 = content1.systemLength;
                 char2 = content2.systemLength;

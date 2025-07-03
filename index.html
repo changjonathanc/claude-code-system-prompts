@@ -122,6 +122,10 @@
                         </select>
                     </div>
                 </div>
+                <div id="versions-loading" class="versions-loading" style="display: none;">
+                    <i class="fas fa-circle-notch fa-spin"></i>
+                    <span>Loading versions from npm registry...</span>
+                </div>
                 <p id="file-hint" class="visually-hidden">Choose two distinct versions to compare</p>
             </div>
         </header>
@@ -144,7 +148,7 @@
                     <i class="fas fa-code-compare fa-3x"></i>
                 </div>
                 <h2>Welcome to the Dynamic Diff Viewer</h2>
-                <p>Select two versions from the dropdowns above to see the differences</p>
+                <p id="welcome-subtitle">Loading available versions from npm registry...</p>
                 <p><small>System prompts are extracted directly from npm packages in real-time</small></p>
             </div>
 

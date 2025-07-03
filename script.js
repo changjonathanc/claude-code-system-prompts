@@ -11,6 +11,77 @@ class DynamicPromptExtractor {
     constructor() {
         this.cache = new Map(); // Cache extracted prompts
         this.packageData = null;
+        this.worker = null;
+        this.workerReady = false;
+        this.requestId = 0;
+        this.pendingRequests = new Map();
+        this.initializeWorker();
+    }
+
+    // Initialize Web Worker for heavy processing
+    initializeWorker() {
+        if (typeof Worker !== 'undefined') {
+            try {
+                this.worker = new Worker('worker.js');
+                this.worker.onmessage = this.handleWorkerMessage.bind(this);
+                this.worker.onerror = this.handleWorkerError.bind(this);
+            } catch (error) {
+                console.warn('Failed to initialize Web Worker:', error);
+                this.worker = null;
+            }
+        }
+    }
+
+    // Handle messages from the worker
+    handleWorkerMessage(e) {
+        const { type, requestId, version, result, error } = e.data;
+        
+        if (type === 'ready') {
+            this.workerReady = true;
+            console.log('Web Worker is ready for processing');
+            return;
+        }
+
+        if (!requestId || !this.pendingRequests.has(requestId)) {
+            return;
+        }
+
+        const { resolve, reject } = this.pendingRequests.get(requestId);
+        this.pendingRequests.delete(requestId);
+
+        if (type === 'success') {
+            // Cache the result
+            this.cache.set(version, result);
+            resolve(result);
+        } else if (type === 'error') {
+            reject(new Error(error));
+        }
+    }
+
+    // Handle worker errors
+    handleWorkerError(error) {
+        console.error('Web Worker error:', error);
+        // Reject all pending requests
+        for (const [requestId, { reject }] of this.pendingRequests) {
+            reject(new Error('Worker failed'));
+        }
+        this.pendingRequests.clear();
+        this.workerReady = false;
+    }
+
+    // Create a promise that resolves when worker sends a response
+    async sendWorkerMessage(message) {
+        if (!this.worker || !this.workerReady) {
+            throw new Error('Web Worker not available');
+        }
+
+        const requestId = ++this.requestId;
+        const messageWithId = { ...message, requestId };
+
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set(requestId, { resolve, reject });
+            this.worker.postMessage(messageWithId);
+        });
     }
 
     // Simple TAR parser for browser (minimal implementation)
@@ -362,6 +433,16 @@ class DynamicPromptExtractor {
         return ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'BlockStatement', 'ForStatement', 'WhileStatement'].includes(nodeType);
     }
 
+    // Clean up worker resources
+    cleanup() {
+        if (this.worker) {
+            this.worker.terminate();
+            this.worker = null;
+            this.workerReady = false;
+            this.pendingRequests.clear();
+        }
+    }
+
     extractLiteralValue(node) {
         if (!node) return null;
 
@@ -428,71 +509,97 @@ class DynamicPromptExtractor {
                 throw new Error(`Version ${version} not found`);
             }
 
-            // Get tarball URL
-            const tarballUrl = packageData.versions[version].dist.tarball;
+            // Use Web Worker if available, otherwise fall back to main thread
+            if (this.worker && this.workerReady) {
+                const result = await this.sendWorkerMessage({
+                    type: 'extractPrompt',
+                    version,
+                    packageData
+                });
 
-            // Download tarball
-            const tarballResponse = await fetch(tarballUrl);
-            if (!tarballResponse.ok) {
-                throw new Error(`Failed to download tarball: ${tarballResponse.status}`);
-            }
-
-            const tarballData = await tarballResponse.arrayBuffer();
-
-            // Decompress gzip
-            const uint8Array = new Uint8Array(tarballData);
-            let pako;
-            if (typeof window !== 'undefined') {
-                pako = window.pako; // Browser environment – pako is global
+                console.log(
+                    `✓ Extracted prompts for ${version} using Web Worker ` +
+                        `(system: ${result.systemLength} chars, ` +
+                        `compact: ${result.compactLength} chars, ` +
+                        `bash: ${result.bashLength} chars, ` +
+                        `init: ${result.initLength} chars, ` +
+                        `todo: ${result.todoLength} chars)`
+                );
+                return result;
             } else {
-                pako = require('pako'); // Node.js fallback
+                // Fallback to main thread processing
+                console.warn('Web Worker not available, falling back to main thread processing');
+                return await this.extractPromptFromVersionMainThread(version, packageData);
             }
-            const decompressed = pako.ungzip(uint8Array);
-
-            // Parse TAR
-            const files = this.parseTarBuffer(
-                decompressed.buffer.slice(
-                    decompressed.byteOffset,
-                    decompressed.byteOffset + decompressed.byteLength
-                )
-            );
-
-            // Locate CLI file
-            const cliFile = files.find(f => f.name === 'package/cli.js' || f.name === 'package/cli.mjs');
-            if (!cliFile) {
-                throw new Error(`No CLI file found in version ${version}`);
-            }
-
-            // Extract prompts via the marker map
-            const content = new TextDecoder().decode(cliFile.content);
-            const result = {};
-            for (const [key, marker] of Object.entries(PROMPT_MARKERS)) {
-                const prompt = await this.extractPrompt(content, marker);
-                result[key] = prompt || null;
-                const lenKey = key.replace('Prompt', 'Length');
-                result[lenKey] = prompt ? prompt.length : 0;
-            }
-
-            if (!result.systemPrompt) {
-                throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
-            }
-
-            // Cache result
-            this.cache.set(version, result);
-
-            console.log(
-                `✓ Extracted prompts for ${version} ` +
-                    `(system: ${result.systemLength} chars, ` +
-                    `compact: ${result.compactLength} chars, ` +
-                    `bash: ${result.bashLength} chars, ` +
-                    `init: ${result.initLength} chars, ` +
-                    `todo: ${result.todoLength} chars)`
-            );
-            return result;
         } catch (error) {
             console.error(`Failed to extract prompt for ${version}:`, error);
             throw error;
         }
+    }
+
+    // Fallback method for main thread processing (kept for compatibility)
+    async extractPromptFromVersionMainThread(version, packageData) {
+        // Get tarball URL
+        const tarballUrl = packageData.versions[version].dist.tarball;
+
+        // Download tarball
+        const tarballResponse = await fetch(tarballUrl);
+        if (!tarballResponse.ok) {
+            throw new Error(`Failed to download tarball: ${tarballResponse.status}`);
+        }
+
+        const tarballData = await tarballResponse.arrayBuffer();
+
+        // Decompress gzip
+        const uint8Array = new Uint8Array(tarballData);
+        let pako;
+        if (typeof window !== 'undefined') {
+            pako = window.pako; // Browser environment – pako is global
+        } else {
+            pako = require('pako'); // Node.js fallback
+        }
+        const decompressed = pako.ungzip(uint8Array);
+
+        // Parse TAR
+        const files = this.parseTarBuffer(
+            decompressed.buffer.slice(
+                decompressed.byteOffset,
+                decompressed.byteOffset + decompressed.byteLength
+            )
+        );
+
+        // Locate CLI file
+        const cliFile = files.find(f => f.name === 'package/cli.js' || f.name === 'package/cli.mjs');
+        if (!cliFile) {
+            throw new Error(`No CLI file found in version ${version}`);
+        }
+
+        // Extract prompts via the marker map
+        const content = new TextDecoder().decode(cliFile.content);
+        const result = {};
+        for (const [key, marker] of Object.entries(PROMPT_MARKERS)) {
+            const prompt = await this.extractPrompt(content, marker);
+            result[key] = prompt || null;
+            const lenKey = key.replace('Prompt', 'Length');
+            result[lenKey] = prompt ? prompt.length : 0;
+        }
+
+        if (!result.systemPrompt) {
+            throw new Error(`No system prompt found in ${cliFile.name} for version ${version}`);
+        }
+
+        // Cache result
+        this.cache.set(version, result);
+
+        console.log(
+            `✓ Extracted prompts for ${version} (main thread) ` +
+                `(system: ${result.systemLength} chars, ` +
+                `compact: ${result.compactLength} chars, ` +
+                `bash: ${result.bashLength} chars, ` +
+                `init: ${result.initLength} chars, ` +
+                `todo: ${result.todoLength} chars)`
+        );
+        return result;
     }
 
     async getAvailableVersions() {
@@ -545,23 +652,111 @@ class DiffReader {
             summary: document.getElementById('summary'),
             promptTabs: document.getElementById('prompt-tabs'),
             copyLeftBtn: document.getElementById('copy-left-btn'),
-            copyRightBtn: document.getElementById('copy-right-btn')
+            copyRightBtn: document.getElementById('copy-right-btn'),
+            versionsLoading: document.getElementById('versions-loading'),
+            welcomeSubtitle: document.getElementById('welcome-subtitle')
         };
 
         this.init();
     }
 
     async init() {
-        console.log('DiffReader init called - loading versions dynamically from npm');
+        console.log('DiffReader init called - setting up UI immediately');
+        
+        // Immediate UI setup (critical path)
         this.elements.diffContainer.style.display = 'none';
         this.elements.welcomeMessage.style.display = 'block';
-        await this.loadFileList();
         this.setupEventListeners();
         this.setupTabs();
-        this.setDefaultSelection();
-        console.log('DiffReader init completed');
+        this.setupInitialDropdownState();
+        
+        // Defer expensive operations until browser is idle
+        this.scheduleDataLoading();
+        
+        console.log('DiffReader immediate init completed');
+    }
+    
+    setupInitialDropdownState() {
+        // Show loading state in dropdowns immediately
+        const { file1Select, file2Select, versionsLoading } = this.elements;
+        file1Select.innerHTML = '<option value="">Loading versions...</option>';
+        file2Select.innerHTML = '<option value="">Loading versions...</option>';
+        
+        // Disable dropdowns until data is loaded
+        file1Select.disabled = true;
+        file2Select.disabled = true;
+        
+        // Show subtle loading indicator
+        if (versionsLoading) {
+            versionsLoading.style.display = 'flex';
+        }
+    }
+    
+    scheduleDataLoading() {
+        // Use requestIdleCallback with fallback for better performance
+        const loadData = () => {
+            console.log('Starting deferred data loading...');
+            this.loadFileListDeferred();
+        };
+        
+        if (typeof requestIdleCallback !== 'undefined') {
+            // Use requestIdleCallback for modern browsers
+            console.log('Using requestIdleCallback for optimal performance');
+            requestIdleCallback(loadData, { timeout: 2000 });
+        } else {
+            // Fallback for older browsers - use setTimeout with a short delay
+            console.log('requestIdleCallback not available, using setTimeout fallback');
+            setTimeout(loadData, 100);
+        }
+    }
+    
+    async loadFileListDeferred() {
+        try {
+            console.log('Loading available versions from npm registry (deferred)...');
+            
+            const versions = await this.promptExtractor.getAvailableVersions();
+            this.files = versions;
+            
+            console.log(`Loaded ${this.files.length} versions from npm registry`);
+            this.populateDropdowns();
+            this.setDefaultSelection();
+            
+            // Hide loading indicator on success
+            if (this.elements.versionsLoading) {
+                this.elements.versionsLoading.style.display = 'none';
+            }
+            
+            // Update welcome message
+            if (this.elements.welcomeSubtitle) {
+                this.elements.welcomeSubtitle.textContent = 'Select two versions from the dropdowns above to see the differences';
+            }
+            
+        } catch (error) {
+            console.error('Failed to load versions:', error);
+            this.showError(`Failed to load versions: ${error.message}`);
+            this.resetDropdownsOnError();
+        }
+    }
+    
+    resetDropdownsOnError() {
+        const { file1Select, file2Select, versionsLoading } = this.elements;
+        file1Select.innerHTML = '<option value="">Failed to load versions</option>';
+        file2Select.innerHTML = '<option value="">Failed to load versions</option>';
+        file1Select.disabled = false;
+        file2Select.disabled = false;
+        
+        // Hide loading indicator on error
+        if (versionsLoading) {
+            versionsLoading.style.display = 'none';
+        }
+        
+        // Update welcome message on error
+        if (this.elements.welcomeSubtitle) {
+            this.elements.welcomeSubtitle.textContent = 'Unable to load versions. Please refresh the page to try again.';
+        }
     }
 
+    // Legacy method - kept for backward compatibility but no longer used in init
     async loadFileList() {
         try {
             this.showLoading(`
@@ -604,6 +799,10 @@ class DiffReader {
             file2Select.appendChild(option2);
         });
 
+        // Re-enable dropdowns after population
+        file1Select.disabled = false;
+        file2Select.disabled = false;
+
         console.log('Dropdowns populated. File1 has', file1Select.options.length, 'options');
     }
 
@@ -612,6 +811,12 @@ class DiffReader {
         const onChange = () => {
             const { value: version1 } = this.elements.file1Select;
             const { value: version2 } = this.elements.file2Select;
+            
+            // If versions aren't loaded yet, ignore change
+            if (this.elements.file1Select.disabled || this.elements.file2Select.disabled) {
+                return;
+            }
+            
             if (!version1 || !version2) return;
             if (version1 === version2) {
                 this.showError('Pick two different versions.');
@@ -678,6 +883,11 @@ class DiffReader {
     }
 
     setDefaultSelection() {
+        // Only set default selection if we have files loaded
+        if (!this.files || this.files.length === 0) {
+            return;
+        }
+        
         if (this.initialFiles.base && this.initialFiles.compare) {
             this.elements.file1Select.value = this.initialFiles.base;
             this.elements.file2Select.value = this.initialFiles.compare;
@@ -721,7 +931,7 @@ class DiffReader {
 
         this.showLoading(`
             <strong>Extracting and comparing prompts...</strong><br>
-            <small>Downloading npm packages, decompressing archives, parsing JavaScript, and resolving template variables</small>
+            <small>Processing in background worker - UI remains responsive</small>
         `);
         this.hideError();
         this.elements.welcomeMessage.style.display = 'none';
@@ -1194,7 +1404,14 @@ if (typeof window !== 'undefined') {
     const waitForLibraries = () => {
         if (window.Diff && window.pako) {
             const params = new URLSearchParams(location.search);
-            new DiffReader(params.get('base'), params.get('compare'));
+            const diffReader = new DiffReader(params.get('base'), params.get('compare'));
+            
+            // Clean up worker on page unload
+            window.addEventListener('beforeunload', () => {
+                if (diffReader.promptExtractor) {
+                    diffReader.promptExtractor.cleanup();
+                }
+            });
         } else {
             setTimeout(waitForLibraries, 50);
         }

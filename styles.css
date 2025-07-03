@@ -292,6 +292,26 @@ body {
     justify-content: center;
 }
 
+.versions-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    opacity: 0.9;
+}
+
+.versions-loading i {
+    color: var(--link-color);
+    font-size: 0.9rem;
+}
+
 .version-select {
     width: 100%;
     padding: 8px 12px;
@@ -316,6 +336,13 @@ body {
     outline: none;
     border-color: var(--link-color);
     box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3);
+}
+
+.version-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    border-color: var(--border-color);
+    background-color: var(--bg-secondary);
 }
 
 /* Welcome message */

@@ -3,7 +3,8 @@ const PROMPT_MARKERS = {
     compactPrompt: 'Your task is to create a detailed summary of the conversation',
     bashPrompt: 'Executes a given bash command in a persistent shell',
     initPrompt: 'Please analyze this codebase and create a CLAUDE.md file',
-    todoPrompt: 'Use this tool to create and manage a structured task list'
+    todoPrompt: 'Use this tool to create and manage a structured task list',
+    bashPrefixPrompt: 'This document defines risk levels for actions that the Claude Code agent may take'
 };
 
 class DynamicPromptExtractor {
@@ -780,6 +781,17 @@ class DiffReader {
                     if (!prompt2) missing.push(version2);
                     throw new Error(`Todo list prompt not found in version(s): ${missing.join(', ')}`);
                 }
+            } else if (this.currentTab === 'bashprefix') {
+                prompt1 = content1.bashPrefixPrompt;
+                prompt2 = content2.bashPrefixPrompt;
+                promptType = 'Bash prefix detection';
+
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Bash prefix detection prompt not found in version(s): ${missing.join(', ')}`);
+                }
             } else {
                 prompt1 = content1.systemPrompt;
                 prompt2 = content2.systemPrompt;
@@ -795,7 +807,9 @@ class DiffReader {
                 content1.initPrompt ||
                 content2.initPrompt ||
                 content1.todoPrompt ||
-                content2.todoPrompt;
+                content2.todoPrompt ||
+                content1.bashPrefixPrompt ||
+                content2.bashPrefixPrompt;
             this.elements.promptTabs.style.display = hasAltPrompt ? 'flex' : 'none';
 
             // Update file names in the diff header with character counts
@@ -812,6 +826,9 @@ class DiffReader {
             } else if (this.currentTab === 'todo') {
                 char1 = content1.todoLength;
                 char2 = content2.todoLength;
+            } else if (this.currentTab === 'bashprefix') {
+                char1 = content1.bashPrefixLength;
+                char2 = content2.bashPrefixLength;
             } else {
                 char1 = content1.systemLength;
                 char2 = content2.systemLength;

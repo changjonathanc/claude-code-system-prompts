@@ -830,7 +830,8 @@ class DiffReader {
                 this.elements.welcomeMessage.style.display = 'block';
                 return;
             }
-            history.replaceState({}, '', `?base=${version1}&compare=${version2}`);
+            const tabHash = this.currentTab !== 'system' ? '#' + this.currentTab : '';
+            history.replaceState({}, '', `?base=${version1}&compare=${version2}${tabHash}`);
             this.compareFiles();
         };
 
@@ -876,7 +877,9 @@ class DiffReader {
         this.currentTab = tabType;
 
         // Update URL hash for bookmarking/linking
-        history.replaceState(null, '', '#' + tabType);
+        const searchParams = new URLSearchParams(location.search);
+        const baseUrl = searchParams.toString() ? '?' + searchParams.toString() : location.pathname;
+        history.replaceState(null, '', baseUrl + (tabType !== 'system' ? '#' + tabType : ''));
 
         // Update tab button states
         const tabButtons = document.querySelectorAll('.tab-button');

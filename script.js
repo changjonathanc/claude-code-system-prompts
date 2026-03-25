@@ -641,7 +641,9 @@ class DiffReader {
         this.fileContents = new Map();
         this.initialFiles = { base: baseFile, compare: compareFile };
         this.promptExtractor = new DynamicPromptExtractor();
-        this.currentTab = 'system'; // 'system' or 'compact'
+        const validTabs = ['system', 'compact', 'bash', 'init', 'todo', 'bashprefix', 'autoclassifier', 'autoagent'];
+        const hashTab = location.hash.slice(1);
+        this.currentTab = validTabs.includes(hashTab) ? hashTab : 'system';
 
         this.elements = {
             file1Select: document.getElementById('file1'),
@@ -860,6 +862,7 @@ class DiffReader {
         const tabButtons = document.querySelectorAll('.tab-button');
 
         tabButtons.forEach(button => {
+            button.classList.toggle('active', button.dataset.tab === this.currentTab);
             button.addEventListener('click', () => {
                 const newTab = button.dataset.tab;
                 if (newTab !== this.currentTab) {
@@ -871,6 +874,9 @@ class DiffReader {
 
     switchTab(tabType) {
         this.currentTab = tabType;
+
+        // Update URL hash for bookmarking/linking
+        history.replaceState(null, '', '#' + tabType);
 
         // Update tab button states
         const tabButtons = document.querySelectorAll('.tab-button');

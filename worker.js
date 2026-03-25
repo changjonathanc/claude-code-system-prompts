@@ -11,7 +11,9 @@ const PROMPT_MARKERS = {
     bashPrompt: 'Executes a given bash command in a persistent shell',
     initPrompt: 'Please analyze this codebase and create a CLAUDE.md file',
     todoPrompt: 'Use this tool to create and manage a structured task list',
-    bashPrefixPrompt: 'This document defines risk levels for actions that the'
+    bashPrefixPrompt: 'This document defines risk levels for actions that the',
+    autoClassifierPrompt: 'You are a security monitor for autonomous AI coding agents',
+    autoAgentPrompt: 'Auto mode is active. The user chose continuous, autonomous execution'
 };
 
 // Simple TAR parser for browser (minimal implementation)

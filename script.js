@@ -4,7 +4,9 @@ const PROMPT_MARKERS = {
     bashPrompt: 'Executes a given bash command in a persistent shell',
     initPrompt: 'Please analyze this codebase and create a CLAUDE.md file',
     todoPrompt: 'Use this tool to create and manage a structured task list',
-    bashPrefixPrompt: 'This document defines risk levels for actions that the'
+    bashPrefixPrompt: 'This document defines risk levels for actions that the',
+    autoClassifierPrompt: 'You are a security monitor for autonomous AI coding agents',
+    autoAgentPrompt: 'Auto mode is active. The user chose continuous, autonomous execution'
 };
 
 class DynamicPromptExtractor {
@@ -597,7 +599,9 @@ class DynamicPromptExtractor {
                 `compact: ${result.compactLength} chars, ` +
                 `bash: ${result.bashLength} chars, ` +
                 `init: ${result.initLength} chars, ` +
-                `todo: ${result.todoLength} chars)`
+                `todo: ${result.todoLength} chars, ` +
+                `autoClassifier: ${result.autoClassifierLength} chars, ` +
+                `autoAgent: ${result.autoAgentLength} chars)`
         );
         return result;
     }
@@ -1002,6 +1006,28 @@ class DiffReader {
                     if (!prompt2) missing.push(version2);
                     throw new Error(`Bash prefix detection prompt not found in version(s): ${missing.join(', ')}`);
                 }
+            } else if (this.currentTab === 'autoclassifier') {
+                prompt1 = content1.autoClassifierPrompt;
+                prompt2 = content2.autoClassifierPrompt;
+                promptType = 'Auto mode classifier';
+
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Auto mode classifier prompt not found in version(s): ${missing.join(', ')}`);
+                }
+            } else if (this.currentTab === 'autoagent') {
+                prompt1 = content1.autoAgentPrompt;
+                prompt2 = content2.autoAgentPrompt;
+                promptType = 'Auto mode agent';
+
+                if (!prompt1 || !prompt2) {
+                    const missing = [];
+                    if (!prompt1) missing.push(version1);
+                    if (!prompt2) missing.push(version2);
+                    throw new Error(`Auto mode agent prompt not found in version(s): ${missing.join(', ')}`);
+                }
             } else {
                 prompt1 = content1.systemPrompt;
                 prompt2 = content2.systemPrompt;
@@ -1019,7 +1045,11 @@ class DiffReader {
                 content1.todoPrompt ||
                 content2.todoPrompt ||
                 content1.bashPrefixPrompt ||
-                content2.bashPrefixPrompt;
+                content2.bashPrefixPrompt ||
+                content1.autoClassifierPrompt ||
+                content2.autoClassifierPrompt ||
+                content1.autoAgentPrompt ||
+                content2.autoAgentPrompt;
             this.elements.promptTabs.style.display = hasAltPrompt ? 'flex' : 'none';
 
             // Update file names in the diff header with character counts
@@ -1039,6 +1069,12 @@ class DiffReader {
             } else if (this.currentTab === 'bashprefix') {
                 char1 = content1.bashPrefixLength;
                 char2 = content2.bashPrefixLength;
+            } else if (this.currentTab === 'autoclassifier') {
+                char1 = content1.autoClassifierLength;
+                char2 = content2.autoClassifierLength;
+            } else if (this.currentTab === 'autoagent') {
+                char1 = content1.autoAgentLength;
+                char2 = content2.autoAgentLength;
             } else {
                 char1 = content1.systemLength;
                 char2 = content2.systemLength;

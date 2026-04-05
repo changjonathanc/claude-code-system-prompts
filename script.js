@@ -241,6 +241,145 @@ class DynamicPromptExtractor {
         return processed;
     }
 
+    // Extract template literal content (between backticks) containing the given marker.
+    // Returns the inner text without the surrounding backticks, or null on failure.
+    extractTemplateLiteralContent(content, marker) {
+        const index = content.indexOf(marker);
+        if (index === -1) return null;
+
+        let start = index;
+        while (start > 0 && content[start] !== '`') start--;
+        if (content[start] !== '`') return null;
+
+        let end = index + marker.length;
+        let depth = 0;
+        while (end < content.length) {
+            if (content[end] === '`' && depth === 0) break;
+            else if (content[end] === '$' && content[end + 1] === '{') { depth++; end += 2; }
+            else if (content[end] === '}' && depth > 0) { depth--; end++; }
+            else if (content[end] === '\\') end += 2;
+            else end++;
+        }
+        if (end >= content.length) return null;
+        return content.substring(start + 1, end); // Strip surrounding backticks
+    }
+
+    // Extract strings from the body of a function identified by a unique marker string inside it,
+    // then format as a list under an optional section header.
+    extractArraySectionContent(content, functionMarker, sectionHeader) {
+        const markerIdx = content.indexOf(functionMarker);
+        if (markerIdx === -1) return null;
+
+        // Walk back to find the enclosing function's opening brace
+        let fnStart = markerIdx;
+        while (fnStart > 0 && content[fnStart] !== '{') fnStart--;
+
+        // Walk forward to find the matching closing brace
+        let depth = 1, i = fnStart + 1;
+        while (i < content.length && depth > 0) {
+            if (content[i] === '{') depth++;
+            else if (content[i] === '}') depth--;
+            i++;
+        }
+        const fnBody = content.substring(fnStart, i);
+
+        // Extract all significant string literals from the array inside the function body
+        const strings = [];
+        let j = 0;
+        while (j < fnBody.length) {
+            const ch = fnBody[j];
+            if (ch === '"' || ch === "'" || ch === '`') {
+                let end = j + 1;
+                while (end < fnBody.length) {
+                    if (fnBody[end] === ch && fnBody[end - 1] !== '\\') break;
+                    if (ch === '`' && fnBody[end] === '$' && fnBody[end + 1] === '{') {
+                        let d = 1; end += 2;
+                        while (end < fnBody.length && d > 0) {
+                            if (fnBody[end] === '{') d++;
+                            else if (fnBody[end] === '}') d--;
+                            end++;
+                        }
+                        continue;
+                    }
+                    if (fnBody[end] === '\\') end++;
+                    end++;
+                }
+                const str = fnBody.substring(j + 1, end)
+                    .replace(/\\"/g, '"')
+                    .replace(/\\'/g, "'")
+                    .replace(/\\n/g, '\n')
+                    .replace(/\\t/g, '\t');
+                if (str.length > 20 && !str.includes('${')) strings.push(str);
+                j = end + 1;
+            } else {
+                j++;
+            }
+        }
+
+        if (strings.length === 0) return null;
+        const items = strings.map(s => ` - ${s}`).join('\n');
+        return sectionHeader ? `${sectionHeader}\n${items}` : items;
+    }
+
+    // Extract the full system prompt from the new multi-section format (v2.1.71+).
+    // Returns the combined prompt string, or null if the new format is not detected.
+    extractFullSystemPrompt(content) {
+        const TL1_MARKER = "You are Claude Code, Anthropic's official CLI for Claude.";
+        if (!content.includes(TL1_MARKER)) return null;
+
+        const sections = [];
+
+        // 1. TL1: first-line identity string
+        sections.push(TL1_MARKER);
+
+        // 2. ulK: security policy constant
+        const ulkStart = content.indexOf('ulK="');
+        const ulkEnd = ulkStart !== -1 ? content.indexOf('"', ulkStart + 5) : -1;
+        const ulK = (ulkStart !== -1 && ulkEnd !== -1) ? content.substring(ulkStart + 5, ulkEnd) : '';
+
+        // 3. UpY: main instruction template literal (resolving known variable references)
+        let upySection = this.extractTemplateLiteralContent(
+            content, 'You are an interactive agent that helps users'
+        );
+        if (upySection) {
+            upySection = upySection
+                .replace(/\$\{q!==null\?'[^']*':"with software engineering tasks\."\}/g,
+                    'with software engineering tasks.')
+                .replace(/\$\{ulK\}/g, ulK)
+                .replace(/\$\{[^}]+\}/g, '');
+            sections.push(upySection.trim());
+        }
+
+        // 4. QpY: # System (string array section)
+        const qpySection = this.extractArraySectionContent(
+            content, 'All text you output outside of tool use is displayed to the user', '# System'
+        );
+        if (qpySection) sections.push(qpySection);
+
+        // 5. dpY: # Doing tasks (string array section)
+        const dpySection = this.extractArraySectionContent(
+            content, "Don't add features, refactor code", '# Doing tasks'
+        );
+        if (dpySection) sections.push(dpySection);
+
+        // 6. cpY: # Executing actions with care (template literal)
+        const cpySection = this.extractTemplateLiteralContent(content, '# Executing actions with care');
+        if (cpySection) sections.push(cpySection.trim());
+
+        // 7. apY: # Tone and style (string array section)
+        const apySection = this.extractArraySectionContent(
+            content, 'Your responses should be short and concise', '# Tone and style'
+        );
+        if (apySection) sections.push(apySection);
+
+        // 8. opY: # Output efficiency (template literal)
+        const opySection = this.extractTemplateLiteralContent(content, '# Output efficiency');
+        if (opySection) sections.push(opySection.trim());
+
+        if (sections.length <= 1) return null; // Only TL1 found — not the new multi-section format
+        return sections.join('\n\n');
+    }
+
     extractPromptSimple(content, searchString = 'You are an interactive CLI tool') {
         const index = content.indexOf(searchString);
         if (index === -1) {
@@ -580,7 +719,13 @@ class DynamicPromptExtractor {
         const content = new TextDecoder().decode(cliFile.content);
         const result = {};
         for (const [key, marker] of Object.entries(PROMPT_MARKERS)) {
-            const prompt = await this.extractPrompt(content, marker);
+            let prompt;
+            if (key === 'systemPrompt') {
+                // Try new multi-section format first (v2.1.71+), fall back to old single-literal format
+                prompt = this.extractFullSystemPrompt(content) || await this.extractPrompt(content, marker);
+            } else {
+                prompt = await this.extractPrompt(content, marker);
+            }
             result[key] = prompt || null;
             const lenKey = key.replace('Prompt', 'Length');
             result[lenKey] = prompt ? prompt.length : 0;
